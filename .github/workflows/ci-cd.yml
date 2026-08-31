@@ -35,7 +35,7 @@ jobs:
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
           version: latest
-          args: --accept-routes --login-server=https://d4c-headscale.duckdns.org
+          args: --login-server=https://d4c-headscale.duckdns.org
 
       - name: Allow insecure (HTTP) registry
         run: |
