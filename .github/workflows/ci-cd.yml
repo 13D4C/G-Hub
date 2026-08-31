@@ -8,7 +8,7 @@ on:
 
 env:
   REGISTRY: 10.30.32.33:5050
-  IMAGE_NAME: g-hub
+  IMAGE_NAME: root/g-hub
 
 jobs:
   build:

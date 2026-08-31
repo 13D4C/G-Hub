@@ -1,6 +1,6 @@
 services:
   app:
-    image: 10.30.32.33:5050/g-hub:latest
+    image: 10.30.32.33:5050/root/g-hub:latest
     container_name: g-hub
     restart: unless-stopped
     ports:
