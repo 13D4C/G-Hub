@@ -1,7 +1,6 @@
 import { VideoPlayer } from '@/components/video-player'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { listVideos } from '@/server/functions/videos'
-import { getVideoById } from '@/server/functions/playback'
+import { listVideos, getVideoById } from '@/server/functions/videos'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { z } from 'zod'
 
