@@ -6,5 +6,12 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   resolve: { tsconfigPaths: true },
-  plugins: [nitro(), tailwindcss(), tanstackStart(), react()],
+  plugins: [
+    tailwindcss(),
+    // tanstackStart() registers Vite's `ssr` environment and must come before
+    // both nitro() (which consumes it) and react().
+    tanstackStart(),
+    nitro({ plugins: ['./src/server/plugins/db.ts'] }),
+    react(),
+  ],
 })

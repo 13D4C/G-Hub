@@ -21,6 +21,11 @@ src/routeTree.gen.ts
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+.env
+.env.*
+!.env.example
+
 *.suo
 *.ntvs*
 *.njsproj
