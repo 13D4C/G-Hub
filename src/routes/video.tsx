@@ -1,7 +1,7 @@
 import { VideoPlayer } from '@/components/video-player'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { listVideos } from '@/server/functions/videos'
-import { getVideoForPlayback } from '@/server/functions/playback'
+import { getVideoById } from '@/server/functions/playback'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { z } from 'zod'
 
@@ -15,7 +15,7 @@ export const Route = createFileRoute('/video')({
   loader: async ({ deps }) => {
     const videos = await listVideos()
     const playback = deps.id
-      ? await getVideoForPlayback({ data: { videoId: deps.id } })
+      ? await getVideoById({ data: { videoId: deps.id } })
       : null
     return { videos, playback }
   },
