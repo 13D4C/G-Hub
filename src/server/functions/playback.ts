@@ -24,7 +24,7 @@ export type PlaybackData = {
  * throw. A preroll ad is attached when the video has ads enabled and an active
  * ad is available.
  */
-export const getVideoForPlayback = createServerFn({ method: 'POST' })
+export const getVideoById = createServerFn({ method: 'POST' })
   .validator(inputSchema)
   .handler(async ({ data }): Promise<PlaybackData> => {
     await connectToDatabase()
