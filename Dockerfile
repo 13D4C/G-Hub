@@ -9,11 +9,10 @@ RUN npm run build
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
-RUN npm install -g serve
 
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/.output ./.output
 
-EXPOSE 80
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost/ >/dev/null || exit 1
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:3000/ >/dev/null || exit 1
 
-CMD ["serve", "-s", "dist", "-l", "80"]
+CMD ["node", ".output/server/index.mjs"]

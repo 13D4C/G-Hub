@@ -9,6 +9,10 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.output
+.tanstack
+.nitro
+.vinxi
 *.local
 
 src/routeTree.gen.ts
