@@ -1,6 +1,10 @@
 node_modules
 dist
 dist-ssr
+.output
+.tanstack
+.nitro
+.vinxi
 .git
 .github
 *.local
