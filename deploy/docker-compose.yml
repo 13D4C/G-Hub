@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "8080:3000"
+    environment:
+      MONGODB_URI: ${MONGODB_URI}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
