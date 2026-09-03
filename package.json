@@ -8,9 +8,11 @@
     "build": "vite build",
     "start": "node .output/server/index.mjs",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "seed": "node --env-file=.env --experimental-strip-types scripts/seed.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1124.0",
     "@tanstack/react-query": "^5.102.8",
     "@tanstack/react-router": "^1.170.32",
     "@tanstack/react-router-ssr-query": "^1.167.2",
