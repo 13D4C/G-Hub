@@ -1,5 +1,7 @@
 import { HeadContent, Link, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
+import { AuthNav } from '@/components/auth-nav'
 import appCss from '@/index.css?url'
+import { meQueryOptions } from '@/lib/auth'
 import type { QueryClient } from '@tanstack/react-query'
 
 interface MyRouterContext {
@@ -15,6 +17,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
+  // Resolve the session once per navigation so the header and the auth route
+  // guards read the same cached `me` result.
+  loader: ({ context }) => context.queryClient.ensureQueryData(meQueryOptions),
   shellComponent: RootDocument,
 })
 
@@ -34,6 +39,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
               <Link to="/video" className="text-muted-foreground [&.active]:text-foreground">
                 Video
               </Link>
+              <div className="ml-auto">
+                <AuthNav />
+              </div>
             </nav>
           </header>
           <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8">{children}</main>
