@@ -1,7 +1,9 @@
 import { HeadContent, Link, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
+import { AuthNav } from '@/components/auth-nav'
 import appCss from '@/index.css?url'
 import { Button } from '@/components/ui/button'
 import { WaterRippleLayer } from '@/components/water-ripple'
+import { meQueryOptions } from '@/lib/auth'
 import { Search, Toilet, Upload } from 'lucide-react'
 import type { QueryClient } from '@tanstack/react-query'
 
@@ -18,6 +20,9 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
+  // Resolve the session once per navigation so the header and the auth route
+  // guards read the same cached `me` result.
+  loader: ({ context }) => context.queryClient.ensureQueryData(meQueryOptions),
   shellComponent: RootDocument,
 })
 
@@ -52,12 +57,15 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                   />
                 </div>
 
-                <Button asChild className="ml-auto shrink-0 gap-2 rounded-full">
-                  <Link to="/upload">
-                    <Upload className="size-4" />
-                    Upload
-                  </Link>
-                </Button>
+                <div className="ml-auto flex shrink-0 items-center gap-3">
+                  <Button asChild className="gap-2 rounded-full">
+                    <Link to="/upload">
+                      <Upload className="size-4" />
+                      Upload
+                    </Link>
+                  </Button>
+                  <AuthNav />
+                </div>
               </div>
             </nav>
           </header>
