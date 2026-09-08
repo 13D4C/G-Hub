@@ -19,14 +19,13 @@ export function AuthNav() {
 
   if (!user) {
     return (
-      <div className="flex items-center gap-2">
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/login">Sign in</Link>
-        </Button>
-        <Button asChild size="sm">
-          <Link to="/register">Sign up</Link>
-        </Button>
-      </div>
+      <Link
+        to="/login"
+        aria-label="Sign in"
+        className="block size-9 shrink-0 overflow-hidden rounded-full ring-2 ring-white/70 transition hover:ring-primary"
+      >
+        <img src="/assets/skibidi.jpg" alt="" className="size-full object-cover" />
+      </Link>
     )
   }
 

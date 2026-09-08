@@ -76,6 +76,9 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    zoom: 125%;
+  }
   body {
     @apply bg-background text-foreground;
   }
@@ -83,25 +86,27 @@
 
 @layer components {
   .bg-tile-navbar {
-    background-image: url('/texture/metro-tiles.jpg');
+    background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), 
+    url('/texture/metro-tiles.jpg');
     background-repeat: repeat;
     background-size: 900px auto;
     background-position: center 27px;
   }
 
   .bg-underwater-base {
-    background-color: #04141d;
+    background-color: #1d1404;
   }
 
   .underwater-tint {
-    background-image: linear-gradient(180deg, rgba(4, 30, 42, 0.62), rgba(2, 10, 16, 0.92));
+    background-image: linear-gradient(180deg, rgba(42, 24, 4, 0.62), rgba(16, 10, 2, 0.92));
     mix-blend-mode: multiply;
   }
 
   .underwater-caustics {
     background-image:
-      radial-gradient(ellipse at 20% 20%, rgba(120, 210, 255, 0.16), transparent 60%),
-      radial-gradient(ellipse at 80% 65%, rgba(80, 190, 220, 0.14), transparent 55%);
+      radial-gradient(ellipse at 20% 20%, rgba(248, 217, 43, 0.16), transparent 80%),
+      radial-gradient(ellipse at 80% 65%, rgba(216, 213, 37, 0.14), transparent 75%);
     background-repeat: no-repeat, no-repeat;
     background-size: 150% 150%, 150% 150%;
     mix-blend-mode: screen;

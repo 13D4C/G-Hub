@@ -36,7 +36,7 @@ function VideoPage() {
   const moreVideos = videos.filter((video) => video.id !== currentId)
 
   return (
-    <Card variant="glass" className="grid grid-cols-1 gap-10 p-6 sm:p-10 lg:grid-cols-[minmax(0,1fr)_360px]">
+    <Card variant="glass" className="grid grid-cols-1 gap-10 p-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="flex flex-col gap-4">
         {playback ? (
           <>
