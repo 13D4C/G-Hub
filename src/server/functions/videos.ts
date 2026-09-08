@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
@@ -49,10 +50,10 @@ export const getVideoById = createServerFn({ method: 'GET' })
 
     const video = await VideoModel.findById(data.videoId).lean()
     if (!video) {
-      throw new Error('Video not found')
+      throw new Error(INTERACTION_ERRORS.videoNotFound)
     }
     if (video.visibility !== 'public') {
-      throw new Error('This video is not public')
+      throw new Error(INTERACTION_ERRORS.videoNotPublic)
     }
 
     const preroll = video.adsEnabled ? await pickPrerollAd() : null
