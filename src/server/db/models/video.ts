@@ -10,6 +10,17 @@ const videoSchema = new mongoose.Schema(
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
     // Whether a preroll ad is served before this video.
     adsEnabled: { type: Boolean, default: true },
+    // Denormalized from the `videolikes` collection, which stays the source of truth.
+    // Kept current by `toggleVideoLike` so reading the interaction summary never has
+    // to count rows; `npm run recount-likes` reconciles it.
+    //
+    // No `min: 0` on either counter: Mongoose validators do not run on update
+    // operators, so it would be inert against `$inc` and would only imply a
+    // guarantee that isn't there.
+    likeCount: { type: Number, default: 0 },
+    // Incremented by `recordShare`. Shares are anonymous, so unlike likes there is no
+    // per-viewer document to store and no per-viewer state to render.
+    shareCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 )
