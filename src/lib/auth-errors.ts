@@ -6,6 +6,7 @@
 export const AUTH_ERRORS = {
   emailTaken: 'An account with this email already exists.',
   invalidCredentials: 'Invalid email or password.',
+  authRequired: 'Please sign in to continue.',
 } as const
 
 const USER_FACING = new Set<string>(Object.values(AUTH_ERRORS))

@@ -1,5 +1,16 @@
+import { VideoComments } from '@/components/video-comments'
+import { VideoInteractionBar } from '@/components/video-interaction-bar'
 import { VideoPlayer } from '@/components/video-player'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { meQueryOptions } from '@/lib/auth'
+import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { listVideos, getVideoById } from '@/server/functions/videos'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { z } from 'zod'
@@ -11,11 +22,27 @@ const videoSearchSchema = z.object({
 export const Route = createFileRoute('/video')({
   validateSearch: videoSearchSchema,
   loaderDeps: ({ search }) => ({ id: search.id }),
-  loader: async ({ deps }) => {
+  loader: async ({ deps, context }) => {
     const videos = await listVideos()
     const playback = deps.id
       ? await getVideoById({ data: { videoId: deps.id } })
       : null
+
+    if (deps.id) {
+      // Warm the interaction caches so the counts and comments are server-rendered
+      // (a non-suspense `useQuery` does not fetch during SSR). They are deliberately
+      // NOT returned as loader data: that would force interaction mutations to
+      // invalidate the loader, handing <VideoPlayer> a fresh `preroll` object and
+      // restarting the video mid-playback.
+      const viewer = await context.queryClient.ensureQueryData(meQueryOptions)
+      await Promise.all([
+        context.queryClient.ensureQueryData(
+          interactionSummaryQueryOptions(deps.id, viewer?.id ?? null),
+        ),
+        context.queryClient.ensureQueryData(commentsQueryOptions(deps.id)),
+      ])
+    }
+
     return { videos, playback }
   },
   component: VideoPage,
@@ -40,7 +67,23 @@ function VideoPage() {
             </p>
           )}
         </CardContent>
+        {playback && (
+          <CardFooter>
+            <VideoInteractionBar videoId={playback.video.id} />
+          </CardFooter>
+        )}
       </Card>
+
+      {playback && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Comments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <VideoComments videoId={playback.video.id} />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
