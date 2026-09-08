@@ -19,6 +19,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
     description: v.description,
     url: v.url,
     durationSeconds: v.durationSeconds,
+    visibility: v.visibility,
   }))
 })
 
@@ -31,6 +32,7 @@ export type PlaybackData = {
     description: string
     url: string
     durationSeconds: number
+    createdAt: string
   }
   preroll: PrerollAd | null
 }
@@ -64,6 +66,7 @@ export const getVideoById = createServerFn({ method: 'GET' })
         description: video.description,
         url: video.url,
         durationSeconds: video.durationSeconds,
+        createdAt: video.createdAt.toISOString(),
       },
       preroll,
     }
