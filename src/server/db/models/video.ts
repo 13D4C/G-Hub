@@ -6,6 +6,10 @@ const videoSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     url: { type: String, required: true },
     durationSeconds: { type: Number, default: 0 },
+    // Only `public` videos are playable without a subscription.
+    visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
+    // Whether a preroll ad is served before this video.
+    adsEnabled: { type: Boolean, default: true },
   },
   { timestamps: true },
 )
