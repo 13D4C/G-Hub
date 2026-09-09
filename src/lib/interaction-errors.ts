@@ -6,7 +6,9 @@
  */
 export const INTERACTION_ERRORS = {
   videoNotFound: 'Video not found',
-  videoNotPublic: 'This video is not public',
+  // Premium video, no active subscription to its channel. Distinct from
+  // `videoNotFound` on purpose: a paywall the viewer can open is not a secret.
+  subscriptionRequired: 'Subscribe to this channel to watch this video.',
   // Deliberately does not distinguish "gone" from "not yours" — never leak whether
   // another viewer's comment exists.
   commentNotFound: 'That comment no longer exists.',

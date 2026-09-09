@@ -6,7 +6,11 @@ const videoSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     url: { type: String, required: true },
     durationSeconds: { type: Number, default: 0 },
-    // Only `public` videos are playable without a subscription.
+    // The channel this video belongs to. Null for videos seeded before channels
+    // existed; those stay public-only, since a premium video with no creator would
+    // be a paywall no subscription can open.
+    creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'user', default: null, index: true },
+    // `private` means premium: playable only by an active subscriber of `creatorId`.
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
     // Whether a preroll ad is served before this video.
     adsEnabled: { type: Boolean, default: true },

@@ -3,7 +3,12 @@
  *
  * Drop files into:
  *   seed/videos/*.mp4   -> `video` collection (public, ads enabled)
+ *   seed/premium/*.mp4  -> `video` collection (premium — subscribers only)
  *   seed/ads/*.mp4      -> `ad` collection (active, skippable after 3s)
+ *
+ * Every seeded video is assigned to one demo channel (SEED_CREATOR_EMAIL), so the
+ * premium ones have a channel to be bought from. That account is password-less: it
+ * exists to own videos, not to be signed into.
  *
  * Run (requires Node 24+ for native TypeScript + --env-file):
  *   node --env-file=.env --experimental-strip-types scripts/seed.ts
@@ -13,6 +18,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { connectToDatabase } from '../src/server/db/mongoose.ts'
+import { UserModel } from '../src/server/db/models/user.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
 import { AdModel } from '../src/server/db/models/ad.ts'
 import { uploadObject } from '../src/server/storage/seaweed.ts'
@@ -39,26 +45,64 @@ async function upload(prefix: string, file: string): Promise<string> {
   return url
 }
 
+/**
+ * The demo channel every seeded video belongs to, created on first run.
+ *
+ * `googleId` is set to a sentinel so the schema's conditional `passwordHash`
+ * requirement does not fire: this account owns videos and is never signed into.
+ */
+async function ensureCreator() {
+  const email = process.env.SEED_CREATOR_EMAIL ?? 'creator@g-hub.local'
+  const name = process.env.SEED_CREATOR_NAME ?? 'Demo Channel'
+  const priceCents = Number(process.env.SEED_CHANNEL_PRICE_CENTS ?? 499)
+
+  const creator = await UserModel.findOneAndUpdate(
+    { email },
+    {
+      email,
+      name,
+      googleId: `seed:${email}`,
+      channelName: name,
+      channelDescription: 'Seeded demo channel for the subscription flow.',
+      subscriptionPriceCents: priceCents,
+      channelCurrency: 'usd',
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  )
+
+  console.log(`channel ready: ${name} (${creator._id}) at ${priceCents} cents/month`)
+  return creator
+}
+
 async function main() {
   await connectToDatabase()
 
   const videoFiles = listMp4(join('seed', 'videos'))
+  const premiumFiles = listMp4(join('seed', 'premium'))
   const adFiles = listMp4(join('seed', 'ads'))
 
-  if (videoFiles.length === 0 && adFiles.length === 0) {
-    console.log('No .mp4 files found in seed/videos or seed/ads. Nothing to do.')
+  if (videoFiles.length === 0 && premiumFiles.length === 0 && adFiles.length === 0) {
+    console.log('No .mp4 files found in seed/videos, seed/premium or seed/ads. Nothing to do.')
     return
   }
 
-  for (const file of videoFiles) {
-    const title = titleFromFile(file)
-    const url = await upload('videos', file)
-    await VideoModel.findOneAndUpdate(
-      { title },
-      { title, url, visibility: 'public', adsEnabled: true },
-      { upsert: true, new: true },
-    )
-    console.log(`video record ready: ${title}`)
+  const creator = await ensureCreator()
+
+  for (const [dir, visibility] of [
+    ['videos', 'public'],
+    ['premium', 'private'],
+  ] as const) {
+    for (const file of dir === 'videos' ? videoFiles : premiumFiles) {
+      const title = titleFromFile(file)
+      const url = await upload(dir, file)
+      await VideoModel.findOneAndUpdate(
+        { title },
+        // Premium videos carry no preroll: the subscription is what replaces the ad.
+        { title, url, visibility, adsEnabled: visibility === 'public', creatorId: creator._id },
+        { upsert: true, new: true },
+      )
+      console.log(`${visibility === 'public' ? 'video' : 'premium video'} record ready: ${title}`)
+    }
   }
 
   for (const file of adFiles) {
