@@ -8,8 +8,10 @@
     "build": "vite build",
     "start": "node .output/server/index.mjs",
     "lint": "oxlint",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "seed": "node --env-file=.env --experimental-strip-types scripts/seed.ts"
+    "seed": "node --env-file=.env --experimental-strip-types scripts/seed.ts",
+    "recount-likes": "node --env-file=.env --experimental-strip-types scripts/recount-likes.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
