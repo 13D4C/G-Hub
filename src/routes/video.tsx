@@ -9,7 +9,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { meQueryOptions } from '@/lib/auth'
+import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { listVideos, getVideoById } from '@/server/functions/videos'
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -24,11 +26,27 @@ export const Route = createFileRoute('/video')({
   loaderDeps: ({ search }) => ({ id: search.id }),
   loader: async ({ deps, context }) => {
     const videos = await listVideos()
-    const playback = deps.id
-      ? await getVideoById({ data: { videoId: deps.id } })
-      : null
 
+    let playback = null
+    let paywalled = false
     if (deps.id) {
+      try {
+        playback = await getVideoById({ data: { videoId: deps.id } })
+      } catch (err) {
+        // The paywall is a page state, not a failure: it renders a subscribe CTA
+        // below. Everything else (missing video, database down) still throws through
+        // to the router's error boundary.
+        if (
+          !(err instanceof Error) ||
+          err.message !== INTERACTION_ERRORS.subscriptionRequired
+        ) {
+          throw err
+        }
+        paywalled = true
+      }
+    }
+
+    if (deps.id && playback) {
       // Warm the interaction caches so the counts and comments are server-rendered
       // (a non-suspense `useQuery` does not fetch during SSR). They are deliberately
       // NOT returned as loader data: that would force interaction mutations to
@@ -43,24 +61,36 @@ export const Route = createFileRoute('/video')({
       ])
     }
 
-    return { videos, playback }
+    return { videos, playback, paywalled }
   },
   component: VideoPage,
 })
 
 function VideoPage() {
-  const { videos, playback } = Route.useLoaderData()
+  const { videos, playback, paywalled } = Route.useLoaderData()
 
   return (
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>{playback ? playback.video.title : 'Pick a video'}</CardTitle>
+          <CardTitle>
+            {playback ? playback.video.title : paywalled ? 'Subscribers only' : 'Pick a video'}
+          </CardTitle>
           {playback && <CardDescription>{playback.video.description}</CardDescription>}
         </CardHeader>
         <CardContent>
           {playback ? (
             <VideoPlayer src={playback.video.url} preroll={playback.preroll} />
+          ) : paywalled ? (
+            <div className="flex flex-col items-start gap-3">
+              <p className="text-sm text-muted-foreground">
+                {INTERACTION_ERRORS.subscriptionRequired} Subscribers also watch without
+                ads.
+              </p>
+              <Button asChild>
+                <Link to="/billing">Go ad-free</Link>
+              </Button>
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">
               Choose a public video below to start watching (free, with a short ad).
