@@ -34,6 +34,7 @@ export function describeAuthError(code: string | undefined): string | undefined 
 export function describeMutationError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message.trim() : ''
   return isUserFacingAuthError(message) ||
+    isUserFacingBillingError(message) ||
     isUserFacingInteractionError(message) ||
     isUserFacingVideoError(message)
     ? message

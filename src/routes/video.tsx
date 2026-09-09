@@ -10,7 +10,7 @@ import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { formatDate } from '@/lib/utils'
 import { listVideos, getVideoById } from '@/server/functions/videos'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { CalendarDays, Droplets } from 'lucide-react'
 import { z } from 'zod'
 
@@ -23,8 +23,6 @@ export const Route = createFileRoute('/video')({
   loaderDeps: ({ search }) => ({ id: search.id }),
   loader: async ({ deps, context }) => {
     const videos = await listVideos()
-    const playback = deps.id ? await getVideoById({ data: { videoId: deps.id } }) : null
-
     let playback = null
     let paywalled = false
     if (deps.id) {
@@ -99,6 +97,16 @@ function VideoPage() {
               </Card>
             </div>
           </>
+        ) : paywalled ? (
+          <Card className="flex flex-col items-start gap-3 p-5">
+            <h1 className="font-display text-xl font-semibold text-slate-900">Subscribers only</h1>
+            <p className="text-sm text-slate-700">
+              {INTERACTION_ERRORS.subscriptionRequired} Subscribers also watch without ads.
+            </p>
+            <Button asChild>
+              <Link to="/billing">Go ad-free</Link>
+            </Button>
+          </Card>
         ) : (
           <EmptyState icon={Droplets} message="Pick a video from the list to start watching" />
         )}
