@@ -6,7 +6,6 @@ import { meQueryOptions } from '@/lib/auth'
 import { safeInternalPath } from '@/lib/redirect'
 
 const authSearchSchema = z.object({
-  mode: z.enum(['login', 'register']).catch('login').default('login'),
   redirect: z.string().optional().catch(undefined),
   /** Set by the Google callback when the OAuth round trip fails. */
   authError: z.string().optional().catch(undefined),
@@ -22,16 +21,13 @@ export const Route = createFileRoute('/login')({
 })
 
 function AuthPage() {
-  const { mode, redirect: redirectTo, authError } = Route.useSearch()
+  const { redirect: redirectTo, authError } = Route.useSearch()
 
   return (
-    <div className="mx-auto w-full max-w-sm">
-      <Card>
-        {mode === 'register' ? (
-          <RegisterForm redirectTo={redirectTo} />
-        ) : (
-          <LoginForm redirectTo={redirectTo} authError={authError} />
-        )}
+    <div className="mx-auto w-full max-w-3xl">
+      <Card className="grid grid-cols-1 gap-0 divide-y divide-slate-200 p-0 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        <LoginForm redirectTo={redirectTo} authError={authError} />
+        <RegisterForm redirectTo={redirectTo} />
       </Card>
     </div>
   )

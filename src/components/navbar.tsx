@@ -12,7 +12,7 @@ export function Navbar({
   onToggleSidebar: () => void
 }) {
   return (
-    <header className="bg-tile-navbar flex items-center border-b border-black/15 shadow-md">
+    <header className="bg-tile-navbar sticky top-0 z-20 flex h-20 items-center border-b border-black/15 shadow-md">
       <RollTrigger open={sidebarOpen} onToggle={onToggleSidebar} />
 
       <nav className="mx-auto flex max-w-6xl flex-1 items-center gap-3 px-4 py-3">

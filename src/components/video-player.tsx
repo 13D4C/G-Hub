@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
+import { Card } from '@/components/ui/card'
 
 export type PrerollAd = {
   mediaUrl: string
@@ -39,7 +40,7 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
       controls: true,
       responsive: true,
       fluid: true,
-      autoplay: true,
+      autoplay: false,
       poster,
       sources: [{ src: hasPreroll ? preroll!.mediaUrl : src, type: 'video/mp4' }],
     })
@@ -86,7 +87,7 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
   const canSkip = skipIn <= 0
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-black shadow-2xl ring-1 ring-white/10">
+    <Card variant="media" className="gap-0 rounded-2xl bg-black py-0 shadow-2xl ring-white/10">
       <div data-vjs-player className="relative">
         <div ref={videoRef} />
 
@@ -122,6 +123,6 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   )
 }

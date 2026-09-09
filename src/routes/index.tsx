@@ -17,11 +17,7 @@ function HomePage() {
   const { videos } = Route.useLoaderData()
 
   return (
-    <Card variant="glass" className="flex flex-col gap-10 p-6">
-      <div>
-        <h1 className="font-display text-3xl font-semibold text-white sm:text-4xl">All videos</h1>
-      </div>
-
+    <Card variant="paper" className="flex flex-col gap-6 p-6">
       {videos.length === 0 ? (
         <EmptyState
           icon={Waves}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Lock, Play } from 'lucide-react'
+import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
 import type { listVideos } from '@/server/functions/videos'
 
@@ -93,41 +94,38 @@ export function VideoCard({
 
   const meta = (
     <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
-      <p
-        className={cn(
-          'font-display line-clamp-2 font-semibold text-slate-900',
-          isGrid ? 'text-lg' : 'text-sm',
-        )}
+      <CardTitle
+        className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
       >
         {video.title}
-      </p>
-      <p className={cn('line-clamp-2 text-slate-500', isGrid ? 'text-sm' : 'text-xs')}>
+      </CardTitle>
+      <CardDescription className={cn('line-clamp-2 text-slate-500', isGrid ? 'text-sm' : 'text-xs')}>
         {isPrivate ? 'Private video' : video.description || 'Public video'}
-      </p>
+      </CardDescription>
     </div>
   )
 
-  const layoutClass = cn(
-    'bg-[#e5e5e5] shadow-xl ring-1 ring-black/5 transition-transform',
-    isGrid
-      ? 'flex flex-col overflow-hidden rounded-3xl hover:-translate-y-1'
-      : 'flex items-start gap-4 overflow-hidden rounded-2xl p-3',
+  const cardClassName = cn(
+    'gap-0 overflow-hidden py-0 transition-transform',
+    isGrid ? 'hover:-translate-y-1' : 'flex-row items-start gap-4 rounded-2xl p-3',
     isPrivate && 'cursor-not-allowed opacity-90 hover:translate-y-0',
   )
 
   if (isPrivate) {
     return (
-      <div className={layoutClass}>
+      <Card variant="solid" className={cardClassName}>
         {thumbnail}
         {meta}
-      </div>
+      </Card>
     )
   }
 
   return (
-    <Link to="/video" search={{ id: video.id }} className={layoutClass}>
-      {thumbnail}
-      {meta}
-    </Link>
+    <Card variant="solid" asChild className={cardClassName}>
+      <Link to="/video" search={{ id: video.id }}>
+        {thumbnail}
+        {meta}
+      </Link>
+    </Card>
   )
 }

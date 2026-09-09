@@ -17,11 +17,12 @@ const loginSchema = z.object({
   password: z.string().min(1),
 })
 
-function toPublicUser(user: { _id: unknown; email: string; name?: string }) {
+function toPublicUser(user: { _id: unknown; email: string; name?: string; avatarUrl?: string }) {
   return {
     id: String(user._id),
     email: user.email,
     name: user.name ?? '',
+    avatarUrl: user.avatarUrl ?? '',
   }
 }
 

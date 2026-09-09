@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link, useRouter } from '@tanstack/react-router'
+import { useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { GoogleSignInButton } from '@/components/google-sign-in-button'
 import { Button } from '@/components/ui/button'
@@ -49,7 +49,7 @@ export function LoginForm({ redirectTo, authError }: { redirectTo?: string; auth
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-6 py-6">
       <CardHeader>
         <CardTitle>Sign in</CardTitle>
         <CardDescription>Welcome back to G-Hub.</CardDescription>
@@ -93,19 +93,8 @@ export function LoginForm({ redirectTo, authError }: { redirectTo?: string; auth
             {signIn.isPending ? 'Signing in…' : 'Sign in'}
           </Button>
         </form>
-
-        <p className="text-sm text-muted-foreground">
-          No account yet?{' '}
-          <Link
-            to="/login"
-            search={{ mode: 'register', redirect: redirectTo }}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            Create one
-          </Link>
-        </p>
       </CardContent>
-    </>
+    </div>
   )
 }
 
@@ -153,28 +142,13 @@ export function RegisterForm({ redirectTo }: { redirectTo?: string }) {
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-6 py-6">
       <CardHeader>
         <CardTitle>Create an account</CardTitle>
-        <CardDescription>Join G-Hub with an email address or your Google account.</CardDescription>
+        <CardDescription>Join G-Hub with an email address.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
-        <GoogleSignInButton redirectTo={destination} />
-
-        <AuthDivider />
-
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="name">Name</Label>
-            <Input
-              id="name"
-              name="name"
-              autoComplete="name"
-              maxLength={100}
-              placeholder="Optional"
-            />
-          </div>
-
           <div className="flex flex-col gap-2">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -223,18 +197,7 @@ export function RegisterForm({ redirectTo }: { redirectTo?: string }) {
             {signUp.isPending ? 'Creating account…' : 'Create account'}
           </Button>
         </form>
-
-        <p className="text-sm text-muted-foreground">
-          Already have an account?{' '}
-          <Link
-            to="/login"
-            search={{ mode: 'login', redirect: redirectTo }}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
       </CardContent>
-    </>
+    </div>
   )
 }
