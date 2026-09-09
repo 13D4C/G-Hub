@@ -7,6 +7,7 @@ import { VideoCommentModel } from '@/server/db/models/video-comment'
 import { VideoLikeModel } from '@/server/db/models/video-like'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
+import { requirePlayableVideo } from '@/server/lib/entitlement'
 
 /**
  * Viewer interactions: likes, comments and shares. Like `videos.ts`, these only ever
@@ -52,18 +53,11 @@ function isDuplicateKeyError(err: unknown): boolean {
 }
 
 /**
- * Interactions are only accepted on videos a viewer is actually allowed to watch,
- * matching `getVideoById`. Reads go through this too, so a private video's like count
- * and comment thread cannot be enumerated by guessing an ObjectId.
- *
- * Assumes the caller has already connected to the database.
+ * Interactions are only accepted on videos a viewer is actually allowed to watch —
+ * the same `requirePlayableVideo` that gates playback, so a premium video's like
+ * count and comment thread cannot be read by a non-subscriber guessing an ObjectId,
+ * and a subscriber is never able to watch a video but not like it.
  */
-async function requirePlayableVideo(videoId: string) {
-  const video = await VideoModel.findById(videoId).lean()
-  if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
-  if (video.visibility !== 'public') throw new Error(INTERACTION_ERRORS.videoNotPublic)
-  return video
-}
 
 export type InteractionSummary = {
   videoId: string
@@ -84,7 +78,7 @@ export const getVideoInteractions = createServerFn({ method: 'GET' })
   .handler(async ({ data }): Promise<InteractionSummary> => {
     const viewerId = await getUserId()
     await connectToDatabase()
-    const video = await requirePlayableVideo(data.videoId)
+    const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     const [commentCount, viewerLike] = await Promise.all([
       VideoCommentModel.countDocuments({ videoId: video._id }),
@@ -118,7 +112,7 @@ export const toggleVideoLike = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<{ liked: boolean; likeCount: number }> => {
     const userId = await requireUserId()
     await connectToDatabase()
-    const video = await requirePlayableVideo(data.videoId)
+    const { video } = await requirePlayableVideo(data.videoId, userId)
 
     const key = { videoId: video._id, userId }
 
@@ -193,8 +187,9 @@ function authorNameFrom(name: string | undefined): string {
 export const listComments = createServerFn({ method: 'GET' })
   .validator(listCommentsSchema)
   .handler(async ({ data }): Promise<CommentPage> => {
+    const viewerId = await getUserId()
     await connectToDatabase()
-    const video = await requirePlayableVideo(data.videoId)
+    const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     // Keyset, not skip/limit: `_id` descending is effectively newest-first and is
     // unique, so a comment posted mid-scroll cannot shift a row across a page
@@ -239,7 +234,7 @@ export const createComment = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<CommentDto> => {
     const userId = await requireUserId()
     await connectToDatabase()
-    const video = await requirePlayableVideo(data.videoId)
+    const { video } = await requirePlayableVideo(data.videoId, userId)
 
     const comment = await VideoCommentModel.create({
       videoId: video._id,
@@ -303,22 +298,25 @@ export const deleteComment = createServerFn({ method: 'POST' })
   })
 
 /**
- * Count a share. Unauthenticated by design — sharing a link is not an account action,
- * and there is no per-viewer share state to render.
+ * Count a share. Still unauthenticated by design — sharing a link is not an account
+ * action, and there is no per-viewer share state to render — but the video itself
+ * must be one this caller may watch.
  */
 export const recordShare = createServerFn({ method: 'POST' })
   .validator(videoIdSchema)
   .handler(async ({ data }): Promise<{ shareCount: number }> => {
+    const viewerId = await getUserId()
     await connectToDatabase()
 
-    // Existence check, visibility check and increment in one atomic operation. A
-    // private video and a missing one give the same message, so this leaks nothing.
-    const video = await VideoModel.findOneAndUpdate(
-      { _id: data.videoId, visibility: 'public' },
+    // Gated like every other interaction: a premium video's share link is only worth
+    // anything to someone who can already watch it.
+    const { video } = await requirePlayableVideo(data.videoId, viewerId)
+
+    const updated = await VideoModel.findByIdAndUpdate(
+      video._id,
       { $inc: { shareCount: 1 } },
       { returnDocument: 'after', projection: { shareCount: 1 } },
     ).lean()
-    if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
-    return { shareCount: video.shareCount ?? 0 }
+    return { shareCount: updated?.shareCount ?? 0 }
   })

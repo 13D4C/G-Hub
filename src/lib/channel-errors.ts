@@ -1,0 +1,20 @@
+/**
+ * Messages the channel/billing server functions reject with. Mirrors
+ * `src/lib/auth-errors.ts` and `src/lib/interaction-errors.ts`: only these are
+ * rendered, so a Stripe misconfiguration or API outage collapses to a generic
+ * message instead of putting key names in front of a viewer.
+ */
+export const CHANNEL_ERRORS = {
+  channelNotFound: 'That channel does not exist.',
+  notAcceptingSubscribers: 'This channel is not accepting subscribers yet.',
+  alreadySubscribed: 'You are already subscribed to this channel.',
+  cannotSubscribeToSelf: 'This is your own channel.',
+  noSubscription: 'You do not have a subscription to manage yet.',
+  checkoutNotComplete: 'That payment has not completed.',
+} as const
+
+const USER_FACING = new Set<string>(Object.values(CHANNEL_ERRORS))
+
+export function isUserFacingChannelError(message: string): boolean {
+  return USER_FACING.has(message)
+}
