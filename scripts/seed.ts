@@ -98,7 +98,7 @@ async function main() {
       await VideoModel.findOneAndUpdate(
         { title },
         // Premium videos carry no preroll: the subscription is what replaces the ad.
-        { title, url, visibility, adsEnabled: visibility === 'public', creatorId: creator._id },
+        { title, url, visibility, adsEnabled: visibility === 'public', uploadedBy: creator._id },
         { upsert: true, new: true },
       )
       console.log(`${visibility === 'public' ? 'video' : 'premium video'} record ready: ${title}`)

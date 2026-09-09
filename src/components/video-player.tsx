@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
+import { Card } from '@/components/ui/card'
 
 export type PrerollAd = {
   mediaUrl: string
@@ -39,6 +40,7 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
       controls: true,
       responsive: true,
       fluid: true,
+      autoplay: false,
       poster,
       sources: [{ src: hasPreroll ? preroll!.mediaUrl : src, type: 'video/mp4' }],
     })
@@ -85,41 +87,42 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
   const canSkip = skipIn <= 0
 
   return (
-    <div data-vjs-player className="relative">
-      <div ref={videoRef} />
+    <Card variant="media" className="gap-0 rounded-2xl bg-black py-0 shadow-2xl ring-white/10">
+      <div data-vjs-player className="relative">
+        <div ref={videoRef} />
 
-      {isAd && preroll && (
-        <div className="pointer-events-none absolute inset-0 z-10">
-          {/* Clickthrough surface — clicking the ad opens the advertiser link. */}
-          {preroll.clickThroughUrl && (
-            <a
-              href={preroll.clickThroughUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="pointer-events-auto absolute inset-0"
-              aria-label="Visit advertiser"
-            />
-          )}
+        {isAd && preroll && (
+          <div className="pointer-events-none absolute inset-0 z-10">
+            {preroll.clickThroughUrl && (
+              <a
+                href={preroll.clickThroughUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="pointer-events-auto absolute inset-0"
+                aria-label="Visit advertiser"
+              />
+            )}
 
-          <span className="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white">
-            Ad
-          </span>
-
-          {canSkip ? (
-            <button
-              type="button"
-              onClick={skipAd}
-              className="pointer-events-auto absolute bottom-14 right-3 rounded bg-black/70 px-3 py-1.5 text-sm font-medium text-white hover:bg-black/85"
-            >
-              Skip Ad ▶
-            </button>
-          ) : (
-            <span className="pointer-events-none absolute bottom-14 right-3 rounded bg-black/70 px-3 py-1.5 text-sm text-white">
-              Skip in {skipIn}s
+            <span className="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white">
+              Ad
             </span>
-          )}
-        </div>
-      )}
-    </div>
+
+            {canSkip ? (
+              <button
+                type="button"
+                onClick={skipAd}
+                className="pointer-events-auto absolute bottom-14 right-3 rounded bg-black/70 px-3 py-1.5 text-sm font-medium text-white hover:bg-black/85"
+              >
+                Skip Ad ▶
+              </button>
+            ) : (
+              <span className="pointer-events-none absolute bottom-14 right-3 rounded bg-black/70 px-3 py-1.5 text-sm text-white">
+                Skip in {skipIn}s
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }

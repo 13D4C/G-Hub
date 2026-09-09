@@ -12,6 +12,7 @@ const userSchema = new mongoose.Schema(
     },
     googleId: { type: String, unique: true, sparse: true },
     name: { type: String, default: '' },
+    avatarUrl: { type: String, default: '' },
 
     // --- Channel ---
     // Every account is potentially a channel; it only becomes one a viewer can

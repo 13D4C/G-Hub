@@ -1,22 +1,18 @@
+import { EmptyState } from '@/components/empty-state'
+import { VideoCard } from '@/components/video-card'
 import { VideoComments } from '@/components/video-comments'
 import { VideoInteractionBar } from '@/components/video-interaction-bar'
 import { VideoPlayer } from '@/components/video-player'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { meQueryOptions } from '@/lib/auth'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
+import { formatDate } from '@/lib/utils'
 import { getLockedVideo, getVideoById, listVideos } from '@/server/functions/videos'
-import type { LockedVideo, PlaybackData } from '@/server/functions/videos'
+import type { LockedVideo, PlaybackData, VideoChannel } from '@/server/functions/videos'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { Lock } from 'lucide-react'
+import { CalendarDays, Droplets, Lock } from 'lucide-react'
 import { z } from 'zod'
 
 const videoSearchSchema = z.object({
@@ -74,95 +70,77 @@ export const Route = createFileRoute('/video')({
 
 function VideoPage() {
   const { videos, playback, locked } = Route.useLoaderData()
+  const currentId = playback?.video.id ?? locked?.id
+  const moreVideos = videos.filter((video) => video.id !== currentId)
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{playback?.video.title ?? locked?.title ?? 'Pick a video'}</CardTitle>
-          {playback ? (
-            <CardDescription>{playback.video.description}</CardDescription>
-          ) : locked ? (
-            <CardDescription>{locked.description}</CardDescription>
-          ) : null}
-          {(playback?.channel ?? locked?.channel) ? (
-            <ChannelByline channel={(playback?.channel ?? locked?.channel)!} />
-          ) : null}
-        </CardHeader>
-        <CardContent>
-          {playback ? (
+    <Card
+      variant="glass"
+      className="grid grid-cols-1 gap-10 p-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_360px]"
+    >
+      <div className="flex flex-col gap-4">
+        {playback ? (
+          <>
             <VideoPlayer src={playback.video.url} preroll={playback.preroll} />
-          ) : locked ? (
-            <Paywall locked={locked} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Choose a public video below to start watching (free, with a short ad).
-            </p>
-          )}
-        </CardContent>
-        {playback && (
-          <CardFooter>
-            <VideoInteractionBar videoId={playback.video.id} />
-          </CardFooter>
+            <div className="flex flex-col gap-4">
+              <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
+                {playback.video.title}
+              </h1>
+
+              <Card className="flex flex-col gap-3 p-5">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <CalendarDays className="size-4" />
+                  Uploaded {formatDate(playback.video.createdAt)}
+                  {playback.channel ? <ChannelByline channel={playback.channel} /> : null}
+                </div>
+                <p className="whitespace-pre-line text-sm text-slate-700">
+                  {playback.video.description || 'No description provided.'}
+                </p>
+                <VideoInteractionBar videoId={playback.video.id} />
+              </Card>
+
+              <Card className="flex flex-col gap-4 p-5">
+                <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
+                  Comments
+                </h2>
+                <VideoComments videoId={playback.video.id} />
+              </Card>
+            </div>
+          </>
+        ) : locked ? (
+          <Paywall locked={locked} />
+        ) : (
+          <EmptyState icon={Droplets} message="Pick a video from the list to start watching" />
         )}
-      </Card>
+      </div>
 
-      {playback && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Comments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <VideoComments videoId={playback.video.id} />
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Public videos</CardTitle>
-          <CardDescription>
-            {videos.length} record(s) from the `video` collection.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {videos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No videos yet — run the seed script to upload media and create records.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {videos.map((v) => (
-                <li key={v.id}>
-                  <Link
-                    to="/video"
-                    search={{ id: v.id }}
-                    className="block rounded-md border px-3 py-2 hover:bg-accent"
-                  >
-                    <p className="font-medium">{v.title}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {v.channel?.name ?? 'No channel'}
-                    </p>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <aside className="flex flex-col gap-3">
+        <h2 className="font-display text-sm font-semibold tracking-wide text-slate-300 uppercase">
+          More videos
+        </h2>
+        {moreVideos.length === 0 ? (
+          <EmptyState icon={Droplets} message="Nothing else here yet" />
+        ) : (
+          moreVideos.map((video) => <VideoCard key={video.id} video={video} variant="list" />)
+        )}
+      </aside>
+    </Card>
   )
 }
 
-function ChannelByline({ channel }: { channel: { creatorId: string; name: string } }) {
+/** Links a video back to the channel that published it. */
+function ChannelByline({ channel }: { channel: VideoChannel }) {
   return (
-    <Link
-      to="/channel"
-      search={{ id: channel.creatorId }}
-      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-    >
-      {channel.name}
-    </Link>
+    <>
+      <span aria-hidden>·</span>
+      <Link
+        to="/channel"
+        search={{ id: channel.creatorId }}
+        className="font-semibold text-slate-600 underline-offset-4 hover:text-slate-900 hover:underline"
+      >
+        {channel.name}
+      </Link>
+    </>
   )
 }
 
@@ -173,22 +151,31 @@ function ChannelByline({ channel }: { channel: { creatorId: string; name: string
  */
 function Paywall({ locked }: { locked: LockedVideo }) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-md border border-dashed p-6">
-      <p className="flex items-center gap-2 font-medium">
-        <Lock className="size-4" aria-hidden />
-        Premium video
-      </p>
-      <p className="text-sm text-muted-foreground">
-        {locked.channel
-          ? `Subscribe to ${locked.channel.name} to watch this.`
-          : 'This video is not available.'}
-      </p>
-      {locked.channel ? (
-        <Button asChild>
-          <Link to="/channel" search={{ id: locked.channel.creatorId }}>
-            View subscription options
-          </Link>
-        </Button>
+    <div className="flex flex-col gap-4">
+      <div className="flex aspect-video flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-white/20 bg-black/40 p-8 text-center">
+        <Lock className="size-10 text-white/80" aria-hidden />
+        <div className="flex flex-col gap-1">
+          <p className="font-display text-lg font-semibold text-white">Premium video</p>
+          <p className="text-sm text-slate-300">
+            {locked.channel
+              ? `Subscribe to ${locked.channel.name} to watch this.`
+              : 'This video is not available.'}
+          </p>
+        </div>
+        {locked.channel ? (
+          <Button asChild className="rounded-full">
+            <Link to="/channel" search={{ id: locked.channel.creatorId }}>
+              View subscription options
+            </Link>
+          </Button>
+        ) : null}
+      </div>
+
+      <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">{locked.title}</h1>
+      {locked.description ? (
+        <Card className="p-5">
+          <p className="whitespace-pre-line text-sm text-slate-700">{locked.description}</p>
+        </Card>
       ) : null}
     </div>
   )

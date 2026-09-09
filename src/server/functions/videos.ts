@@ -1,10 +1,13 @@
 import { createServerFn } from '@tanstack/react-start'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { connectToDatabase } from '@/server/db/mongoose'
-import { getUserId } from '@/server/auth/require-user'
+import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
+import { uploadObject } from '@/server/storage/seaweed'
 import { requirePlayableVideo } from '@/server/lib/entitlement'
 
 /**
@@ -17,52 +20,59 @@ export type VideoChannel = {
   name: string
 }
 
-/**
- * The channel a video belongs to, or null for videos seeded before channels existed.
- *
- * Assumes the caller has already connected to the database.
- */
-async function channelOf(creatorId: unknown): Promise<VideoChannel | null> {
-  if (!creatorId) return null
-
-  const creator = await UserModel.findById(creatorId).select('name channelName').lean()
-  if (!creator) return null
-
+function channelFrom(creator: { _id: unknown; name?: string; channelName?: string }): VideoChannel {
   return {
     creatorId: String(creator._id),
     name: creator.channelName || creator.name || 'Untitled channel',
   }
 }
 
-/** The browsable catalogue: public videos only, so the list itself is not a paywall. */
+/**
+ * The channel a video belongs to, or null for videos uploaded before channels
+ * existed. `uploadedBy` is the channel: a channel has no identity of its own.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
+  if (!uploadedBy) return null
+
+  const creator = await UserModel.findById(uploadedBy).select('name channelName').lean()
+  return creator ? channelFrom(creator) : null
+}
+
+/**
+ * The browsable catalogue.
+ *
+ * Premium videos are listed alongside public ones — `<VideoCard>` blurs them and
+ * sends the viewer to the channel that sells the key. That is the point of a
+ * paywall: you can see what you would be buying. Only `url` is a real secret, and
+ * for a premium row it is withheld here; playback goes through `getVideoById`,
+ * which re-checks entitlement.
+ */
 export const listVideos = createServerFn({ method: 'GET' }).handler(async () => {
   await connectToDatabase()
 
-  const videos = await VideoModel.find({ visibility: 'public' })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean()
+  const videos = await VideoModel.find().sort({ createdAt: -1 }).limit(50).lean()
 
   // One `$in` for every creator on the page rather than a lookup per row — the same
   // shape `listComments` uses for author names, and for the same reason.
-  const creatorIds = [...new Set(videos.map((v) => String(v.creatorId)).filter(Boolean))]
+  const creatorIds = [...new Set(videos.map((v) => String(v.uploadedBy)).filter(Boolean))]
   const creators = await UserModel.find({ _id: { $in: creatorIds } })
     .select('name channelName')
     .lean()
-  const channelById = new Map(
-    creators.map((c) => [
-      String(c._id),
-      { creatorId: String(c._id), name: c.channelName || c.name || 'Untitled channel' },
-    ]),
-  )
+  const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 
   return videos.map((v) => ({
     id: String(v._id),
     title: v.title,
     description: v.description,
-    url: v.url,
+    // A premium video's media URL is the one thing the paywall actually protects,
+    // so an unentitled listing must not carry it. `<VideoCard>` renders a locked
+    // placeholder instead of a thumbnail when this is empty.
+    url: v.visibility === 'public' ? v.url : '',
     durationSeconds: v.durationSeconds,
-    channel: channelById.get(String(v.creatorId)) ?? null,
+    visibility: v.visibility,
+    channel: channelById.get(String(v.uploadedBy)) ?? null,
   }))
 })
 
@@ -75,6 +85,7 @@ export type PlaybackData = {
     description: string
     url: string
     durationSeconds: number
+    createdAt: string
   }
   channel: VideoChannel | null
   /** True when the viewer subscribes to this video's channel (or owns it). */
@@ -89,7 +100,7 @@ export type PlaybackData = {
  * Public videos are open to everyone; premium ones (`visibility: 'private'`) require
  * an active subscription to the video's channel, and `requirePlayableVideo` throws
  * `subscriptionRequired` otherwise — the message the `/video` route turns into a
- * subscribe prompt. A subscriber's own channel plays ad-free, which is the other
+ * subscribe prompt. A subscriber watches that channel ad-free, which is the other
  * half of what they paid for.
  */
 export const getVideoById = createServerFn({ method: 'GET' })
@@ -108,8 +119,9 @@ export const getVideoById = createServerFn({ method: 'GET' })
         description: video.description,
         url: video.url,
         durationSeconds: video.durationSeconds,
+        createdAt: video.createdAt.toISOString(),
       },
-      channel: await channelOf(video.creatorId),
+      channel: await channelOf(video.uploadedBy),
       subscribed,
       premium: video.visibility !== 'public',
       preroll,
@@ -138,7 +150,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
     await connectToDatabase()
 
     const video = await VideoModel.findById(data.videoId)
-      .select('title description creatorId')
+      .select('title description uploadedBy')
       .lean()
     if (!video) return null
 
@@ -146,6 +158,82 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
       id: String(video._id),
       title: video.title,
       description: video.description,
-      channel: await channelOf(video.creatorId),
+      channel: await channelOf(video.uploadedBy),
     }
+  })
+
+export type MyVideo = {
+  id: string
+  title: string
+  description: string
+  url: string
+  durationSeconds: number
+  visibility: 'public' | 'private'
+  likeCount: number
+  shareCount: number
+  createdAt: string
+}
+
+export const listMyVideos = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<MyVideo[]> => {
+    const userId = await requireUserId()
+    await connectToDatabase()
+
+    const videos = await VideoModel.find({ uploadedBy: userId })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean()
+
+    return videos.map((v) => ({
+      id: String(v._id),
+      title: v.title,
+      description: v.description,
+      url: v.url,
+      durationSeconds: v.durationSeconds,
+      visibility: v.visibility,
+      likeCount: v.likeCount ?? 0,
+      shareCount: v.shareCount ?? 0,
+      createdAt: v.createdAt.toISOString(),
+    }))
+  },
+)
+
+export const createVideo = createServerFn({ method: 'POST' })
+  .validator((data: unknown) => {
+    if (!(data instanceof FormData)) throw new Error('Invalid form submission')
+    return data
+  })
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const userId = await requireUserId()
+
+    const file = data.get('file')
+    const title = String(data.get('title') ?? '').trim()
+    const description = String(data.get('description') ?? '').trim()
+    const visibility = data.get('visibility') === 'private' ? 'private' : 'public'
+
+    if (!(file instanceof File) || !file.type.startsWith('video/')) {
+      throw new Error(VIDEO_ERRORS.invalidFile)
+    }
+    if (!title) {
+      throw new Error(VIDEO_ERRORS.titleRequired)
+    }
+
+    await connectToDatabase()
+
+    const body = new Uint8Array(await file.arrayBuffer())
+    const key = `videos/${randomUUID()}-${file.name}`
+    const url = await uploadObject({ key, body, contentType: file.type })
+
+    const video = await VideoModel.create({
+      title,
+      description,
+      url,
+      visibility,
+      uploadedBy: userId,
+      // A premium video is the subscription's product; running an ad in front of it
+      // as well would be selling the same minute twice.
+      adsEnabled: visibility === 'public',
+    })
+
+    return { id: String(video._id) }
   })

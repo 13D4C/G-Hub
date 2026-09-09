@@ -56,7 +56,7 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
 
   // Computed even for a public video: one indexed lookup, and a `subscribed` flag
   // that is only true when the paywall forced it would be a lie the UI reads.
-  const subscribed = await hasActiveChannelSubscription(viewerId, video.creatorId)
+  const subscribed = await hasActiveChannelSubscription(viewerId, video.uploadedBy)
   if (video.visibility !== 'public' && !subscribed) {
     throw new Error(INTERACTION_ERRORS.subscriptionRequired)
   }
