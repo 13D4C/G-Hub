@@ -5,6 +5,7 @@ const videoSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     url: { type: String, required: true },
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'user' },
     durationSeconds: { type: Number, default: 0 },
     // Only `public` videos are playable without a subscription.
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },

@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap');
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -90,7 +91,7 @@
     linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), 
     url('/texture/metro-tiles.jpg');
     background-repeat: repeat;
-    background-size: 900px auto;
+    background-size: 400px auto;
     background-position: center 27px;
   }
 

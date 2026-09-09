@@ -6,6 +6,7 @@ import { VideoPlayer } from '@/components/video-player'
 import { Card } from '@/components/ui/card'
 import { meQueryOptions } from '@/lib/auth'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
+import { formatDate } from '@/lib/utils'
 import { listVideos, getVideoById } from '@/server/functions/videos'
 import { createFileRoute } from '@tanstack/react-router'
 import { CalendarDays, Droplets } from 'lucide-react'
@@ -42,14 +43,6 @@ export const Route = createFileRoute('/video')({
   component: VideoPage,
 })
 
-function formatUploadDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-}
-
 function VideoPage() {
   const { videos, playback } = Route.useLoaderData()
   const currentId = playback?.video.id
@@ -66,10 +59,10 @@ function VideoPage() {
                 {playback.video.title}
               </h1>
 
-              <Card className="flex flex-col gap-3 p-5 shadow-lg">
+              <Card className="flex flex-col gap-3 p-5">
                 <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
                   <CalendarDays className="size-4" />
-                  Uploaded {formatUploadDate(playback.video.createdAt)}
+                  Uploaded {formatDate(playback.video.createdAt)}
                 </div>
                 <p className="whitespace-pre-line text-sm text-slate-700">
                   {playback.video.description || 'No description provided.'}
@@ -77,7 +70,7 @@ function VideoPage() {
                 <VideoInteractionBar videoId={playback.video.id} />
               </Card>
 
-              <Card className="flex flex-col gap-4 p-5 shadow-lg">
+              <Card className="flex flex-col gap-4 p-5">
                 <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-slate-500">
                   Comments
                 </h2>

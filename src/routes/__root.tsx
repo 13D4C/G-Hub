@@ -35,14 +35,14 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <HeadContent />
       </head>
       <body>
-        <div className="bg-underwater-base flex min-h-svh flex-col text-slate-100">
+        <div className="bg-underwater-base flex min-h-full flex-col text-slate-100">
           <WaterRippleLayer />
           <div className="relative z-10 flex flex-1 flex-col">
             <Navbar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)} />
 
             <div className="flex min-h-0 flex-1">
               <PaperFlyout open={sidebarOpen} />
-              <main className="mx-auto w-full max-w-375 flex-1 px-4 py-8">{children}</main>
+              <main className="mx-auto w-full max-w-375 min-w-0 flex-1 px-4 py-4">{children}</main>
             </div>
           </div>
         </div>
