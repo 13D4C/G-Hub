@@ -1,9 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
-import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
+import { getUserId } from '@/server/auth/require-user'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
+import { requirePlayableVideo } from '@/server/lib/entitlement'
 
 /**
  * Server functions only ever run on the server, so `mongoose` never reaches the
@@ -37,26 +38,22 @@ export type PlaybackData = {
 }
 
 /**
- * Return a public video for playback plus a preroll ad to show before it.
+ * Return a video for playback plus a preroll ad to show before it.
  *
- * Only `public` videos are playable (no subscription required). Private videos
- * throw. A preroll ad is attached when the video has ads enabled and an active
- * ad is available.
+ * Public videos are playable by anyone; private ones need an active subscription,
+ * which `requirePlayableVideo` enforces for playback and interactions alike. A
+ * preroll is attached when the video has ads enabled, an active ad exists, and the
+ * viewer is not a subscriber — paying is what turns the ads off.
  */
 export const getVideoById = createServerFn({ method: 'GET' })
   .validator(getVideoByIdSchema)
   .handler(async ({ data }): Promise<PlaybackData> => {
+    const viewerId = await getUserId()
     await connectToDatabase()
 
-    const video = await VideoModel.findById(data.videoId).lean()
-    if (!video) {
-      throw new Error(INTERACTION_ERRORS.videoNotFound)
-    }
-    if (video.visibility !== 'public') {
-      throw new Error(INTERACTION_ERRORS.videoNotPublic)
-    }
+    const { video, subscribed } = await requirePlayableVideo(data.videoId, viewerId)
 
-    const preroll = video.adsEnabled ? await pickPrerollAd() : null
+    const preroll = video.adsEnabled && !subscribed ? await pickPrerollAd() : null
 
     return {
       video: {
