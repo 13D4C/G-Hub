@@ -8,7 +8,7 @@ const cardVariants = cva("flex flex-col gap-6 rounded-3xl py-6 text-card-foregro
   variants: {
     variant: {
       solid: "bg-white shadow-xl",
-      glass: "border border-white/20 bg-white/10 shadow-2xl backdrop-blur-xl",
+      glass: "border border-white/20 bg-white/10 shadow-2xl backdrop-blur",
     },
   },
   defaultVariants: {
