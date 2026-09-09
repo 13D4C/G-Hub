@@ -69,7 +69,11 @@ export function VideoPlayer({ src, poster, preroll }: VideoPlayerProps) {
       player.dispose()
       playerRef.current = null
     }
-  }, [src, poster, preroll])
+    // Depend on the ad's *values*, not the `preroll` object's identity: the route
+    // loader builds a fresh object every run, so an identity dep would dispose and
+    // rebuild the player (replaying the ad) on any unrelated loader re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `preroll` itself is deliberately excluded; the two fields above are all this effect reads.
+  }, [src, poster, preroll?.mediaUrl, preroll?.skippableAfterSeconds])
 
   function skipAd() {
     const player = playerRef.current

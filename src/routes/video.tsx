@@ -1,7 +1,11 @@
 import { EmptyState } from '@/components/empty-state'
-import { Card } from '@/components/ui/card'
-import { VideoPlayer } from '@/components/video-player'
 import { VideoCard } from '@/components/video-card'
+import { VideoComments } from '@/components/video-comments'
+import { VideoInteractionBar } from '@/components/video-interaction-bar'
+import { VideoPlayer } from '@/components/video-player'
+import { Card } from '@/components/ui/card'
+import { meQueryOptions } from '@/lib/auth'
+import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { listVideos, getVideoById } from '@/server/functions/videos'
 import { createFileRoute } from '@tanstack/react-router'
 import { CalendarDays, Droplets } from 'lucide-react'
@@ -14,9 +18,25 @@ const videoSearchSchema = z.object({
 export const Route = createFileRoute('/video')({
   validateSearch: videoSearchSchema,
   loaderDeps: ({ search }) => ({ id: search.id }),
-  loader: async ({ deps }) => {
+  loader: async ({ deps, context }) => {
     const videos = await listVideos()
     const playback = deps.id ? await getVideoById({ data: { videoId: deps.id } }) : null
+
+    if (deps.id) {
+      // Warm the interaction caches so the counts and comments are server-rendered
+      // (a non-suspense `useQuery` does not fetch during SSR). They are deliberately
+      // NOT returned as loader data: that would force interaction mutations to
+      // invalidate the loader, handing <VideoPlayer> a fresh `preroll` object and
+      // restarting the video mid-playback.
+      const viewer = await context.queryClient.ensureQueryData(meQueryOptions)
+      await Promise.all([
+        context.queryClient.ensureQueryData(
+          interactionSummaryQueryOptions(deps.id, viewer?.id ?? null),
+        ),
+        context.queryClient.ensureQueryData(commentsQueryOptions(deps.id)),
+      ])
+    }
+
     return { videos, playback }
   },
   component: VideoPage,
@@ -54,6 +74,14 @@ function VideoPage() {
                 <p className="whitespace-pre-line text-sm text-slate-700">
                   {playback.video.description || 'No description provided.'}
                 </p>
+                <VideoInteractionBar videoId={playback.video.id} />
+              </Card>
+
+              <Card className="flex flex-col gap-4 p-5 shadow-lg">
+                <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  Comments
+                </h2>
+                <VideoComments videoId={playback.video.id} />
               </Card>
             </div>
           </>
