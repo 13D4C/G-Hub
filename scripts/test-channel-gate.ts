@@ -54,13 +54,13 @@ async function main() {
     title: `${tag} free`,
     url: 'http://example.test/free.mp4',
     visibility: 'public',
-    creatorId: creator._id,
+    uploadedBy: creator._id,
   })
   const premium = await VideoModel.create({
     title: `${tag} premium`,
     url: 'http://example.test/premium.mp4',
     visibility: 'private',
-    creatorId: creator._id,
+    uploadedBy: creator._id,
   })
 
   const freeId = String(free._id)
@@ -113,7 +113,7 @@ async function main() {
     title: `${tag} other premium`,
     url: 'http://example.test/other.mp4',
     visibility: 'private',
-    creatorId: other._id,
+    uploadedBy: other._id,
   })
   assert.equal(
     await denial(String(otherPremium._id), viewerId),

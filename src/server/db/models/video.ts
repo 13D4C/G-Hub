@@ -5,12 +5,14 @@ const videoSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     url: { type: String, required: true },
+    // The uploader, and therefore the channel this video belongs to — a channel has
+    // no identity of its own, it is the creator (see `user.channelName`). Indexed
+    // because both the channel page and the paywall look videos up by it. Absent on
+    // videos seeded before uploads existed; those stay public-only, since a premium
+    // video with no creator would be a paywall no subscription can open.
+    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'user', index: true },
     durationSeconds: { type: Number, default: 0 },
-    // The channel this video belongs to. Null for videos seeded before channels
-    // existed; those stay public-only, since a premium video with no creator would
-    // be a paywall no subscription can open.
-    creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'user', default: null, index: true },
-    // `private` means premium: playable only by an active subscriber of `creatorId`.
+    // `private` means premium: playable only by an active subscriber of `uploadedBy`.
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
     // Whether a preroll ad is served before this video.
     adsEnabled: { type: Boolean, default: true },

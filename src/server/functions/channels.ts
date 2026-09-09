@@ -35,62 +35,6 @@ function channelPath(creatorId: string): string {
   return `/channel?id=${creatorId}`
 }
 
-export type ChannelSummary = {
-  creatorId: string
-  name: string
-  description: string
-  priceCents: number
-  currency: string
-  videoCount: number
-  premiumCount: number
-}
-
-/**
- * Every channel accepting subscribers, for the home page.
- *
- * Without this a viewer can only reach a channel from a video they can already
- * watch — which is no way to find one whose whole catalogue is premium.
- */
-export const listChannels = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<Array<ChannelSummary>> => {
-    await connectToDatabase()
-
-    const creators = await UserModel.find({ subscriptionPriceCents: { $gt: 0 } })
-      .select('name channelName channelDescription subscriptionPriceCents channelCurrency')
-      .limit(50)
-      .lean()
-    if (creators.length === 0) return []
-
-    // One grouped count for the whole page rather than two queries per channel.
-    const counts = await VideoModel.aggregate<{
-      _id: { creatorId: unknown; visibility: string }
-      n: number
-    }>([
-      { $match: { creatorId: { $in: creators.map((c) => c._id) } } },
-      { $group: { _id: { creatorId: '$creatorId', visibility: '$visibility' }, n: { $sum: 1 } } },
-    ])
-
-    const totals = new Map<string, { videoCount: number; premiumCount: number }>()
-    for (const row of counts) {
-      const key = String(row._id.creatorId)
-      const entry = totals.get(key) ?? { videoCount: 0, premiumCount: 0 }
-      entry.videoCount += row.n
-      if (row._id.visibility !== 'public') entry.premiumCount += row.n
-      totals.set(key, entry)
-    }
-
-    return creators.map((c) => ({
-      creatorId: String(c._id),
-      name: c.channelName || c.name || 'Untitled channel',
-      description: c.channelDescription ?? '',
-      priceCents: c.subscriptionPriceCents ?? 0,
-      currency: c.channelCurrency || 'usd',
-      videoCount: totals.get(String(c._id))?.videoCount ?? 0,
-      premiumCount: totals.get(String(c._id))?.premiumCount ?? 0,
-    }))
-  },
-)
-
 export type ChannelVideo = {
   id: string
   title: string
@@ -151,7 +95,7 @@ export const getChannel = createServerFn({ method: 'GET' })
     // Premium videos are listed to everyone: the point of a paywall is that a viewer
     // can see what they would be buying. Only the media `url` is withheld, and it is
     // never selected here — playback goes through `getVideoById`, which re-checks.
-    const videos = await VideoModel.find({ creatorId: creator._id })
+    const videos = await VideoModel.find({ uploadedBy: creator._id })
       .select('title description durationSeconds visibility')
       .sort({ createdAt: -1 })
       .limit(100)
@@ -180,6 +124,40 @@ export const getChannel = createServerFn({ method: 'GET' })
         }
       }),
     }
+  })
+
+const channelSettingsSchema = z.object({
+  channelName: z.string().trim().max(80),
+  channelDescription: z.string().trim().max(500),
+  /**
+   * Minor units. Capped rather than open-ended so a fat-fingered price cannot bill a
+   * subscriber hundreds of dollars, and floored at Stripe's minimum chargeable
+   * amount — below that Checkout rejects the session with an error the viewer, not
+   * the creator, would be the one to see.
+   */
+  subscriptionPriceCents: z.union([
+    z.literal(0),
+    z.number().int().min(50).max(500_000),
+  ]),
+})
+
+/**
+ * Update the signed-in viewer's own channel. There is no `creatorId` argument on
+ * purpose: identity comes from the session, so this can only ever edit your own
+ * channel and no ownership check is needed.
+ *
+ * Changing the price does not touch anyone's existing subscription — Stripe keeps
+ * billing each subscriber the amount they agreed to, and `channelsubscription`
+ * snapshots it — so a raise applies to new subscribers only.
+ */
+export const updateChannelSettings = createServerFn({ method: 'POST' })
+  .validator(channelSettingsSchema)
+  .handler(async ({ data }): Promise<{ priceCents: number }> => {
+    const userId = await requireUserId()
+    await connectToDatabase()
+
+    await UserModel.updateOne({ _id: userId }, { $set: data })
+    return { priceCents: data.subscriptionPriceCents }
   })
 
 /**
