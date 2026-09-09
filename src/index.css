@@ -1,4 +1,6 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap');
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -46,6 +48,7 @@
 }
 
 @theme inline {
+  --font-display: 'Fredoka', ui-rounded, 'Segoe UI', sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -74,7 +77,59 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    zoom: 125%;
+  }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .bg-tile-navbar {
+    background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), 
+    url('/texture/metro-tiles.jpg');
+    background-repeat: repeat;
+    background-size: 400px auto;
+    background-position: center 27px;
+  }
+
+  .bg-underwater-base {
+    background-color: #1d1404;
+  }
+
+  .underwater-tint {
+    background-image: linear-gradient(180deg, rgba(42, 24, 4, 0.62), rgba(16, 10, 2, 0.92));
+    mix-blend-mode: multiply;
+  }
+
+  .underwater-caustics {
+    background-image:
+      radial-gradient(ellipse at 20% 20%, rgba(248, 217, 43, 0.16), transparent 80%),
+      radial-gradient(ellipse at 80% 65%, rgba(216, 213, 37, 0.14), transparent 75%);
+    background-repeat: no-repeat, no-repeat;
+    background-size: 150% 150%, 150% 150%;
+    mix-blend-mode: screen;
+    animation: tile-caustics 20s ease-in-out infinite alternate;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .underwater-caustics {
+      animation: none;
+    }
+  }
+
+  .underwater-vignette {
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.8) 100%);
+  }
+}
+
+@keyframes tile-caustics {
+  0% {
+    background-position: 0% 0%, 100% 100%;
+  }
+  100% {
+    background-position: 18% 12%, 82% 88%;
   }
 }

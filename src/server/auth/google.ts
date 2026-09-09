@@ -16,6 +16,7 @@ export interface GoogleProfile {
   email: string
   emailVerified: boolean
   name: string
+  avatarUrl: string
 }
 
 export function getGoogleConfig(): GoogleConfig {
@@ -119,6 +120,7 @@ interface IdTokenClaims {
   email?: string
   email_verified?: boolean
   name?: string
+  picture?: string
 }
 
 /**
@@ -151,5 +153,6 @@ export function parseIdToken(idToken: string, config: GoogleConfig): GoogleProfi
     email: claims.email.toLowerCase(),
     emailVerified: claims.email_verified === true,
     name: claims.name ?? '',
+    avatarUrl: claims.picture ?? '',
   }
 }

@@ -1,20 +1,17 @@
+import { EmptyState } from '@/components/empty-state'
+import { VideoCard } from '@/components/video-card'
 import { VideoComments } from '@/components/video-comments'
 import { VideoInteractionBar } from '@/components/video-interaction-bar'
 import { VideoPlayer } from '@/components/video-player'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { meQueryOptions } from '@/lib/auth'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
+import { formatDate } from '@/lib/utils'
 import { listVideos, getVideoById } from '@/server/functions/videos'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import { CalendarDays, Droplets } from 'lucide-react'
 import { z } from 'zod'
 
 const videoSearchSchema = z.object({
@@ -26,6 +23,7 @@ export const Route = createFileRoute('/video')({
   loaderDeps: ({ search }) => ({ id: search.id }),
   loader: async ({ deps, context }) => {
     const videos = await listVideos()
+    const playback = deps.id ? await getVideoById({ data: { videoId: deps.id } }) : null
 
     let playback = null
     let paywalled = false
@@ -68,83 +66,58 @@ export const Route = createFileRoute('/video')({
 
 function VideoPage() {
   const { videos, playback, paywalled } = Route.useLoaderData()
+  const currentId = playback?.video.id
+  const moreVideos = videos.filter((video) => video.id !== currentId)
 
   return (
-    <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {playback ? playback.video.title : paywalled ? 'Subscribers only' : 'Pick a video'}
-          </CardTitle>
-          {playback && <CardDescription>{playback.video.description}</CardDescription>}
-        </CardHeader>
-        <CardContent>
-          {playback ? (
+    <Card variant="glass" className="grid grid-cols-1 gap-10 p-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="flex flex-col gap-4">
+        {playback ? (
+          <>
             <VideoPlayer src={playback.video.url} preroll={playback.preroll} />
-          ) : paywalled ? (
-            <div className="flex flex-col items-start gap-3">
-              <p className="text-sm text-muted-foreground">
-                {INTERACTION_ERRORS.subscriptionRequired} Subscribers also watch without
-                ads.
-              </p>
-              <Button asChild>
-                <Link to="/billing">Go ad-free</Link>
-              </Button>
+            <div className="flex flex-col gap-4">
+              <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
+                {playback.video.title}
+              </h1>
+
+              <Card className="flex flex-col gap-3 p-5">
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <CalendarDays className="size-4" />
+                  Uploaded {formatDate(playback.video.createdAt)}
+                </div>
+                <p className="whitespace-pre-line text-sm text-slate-700">
+                  {playback.video.description || 'No description provided.'}
+                </p>
+                <VideoInteractionBar videoId={playback.video.id} />
+              </Card>
+
+              <Card className="flex flex-col gap-4 p-5">
+                <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  Comments
+                </h2>
+                <VideoComments videoId={playback.video.id} />
+              </Card>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Choose a public video below to start watching (free, with a short ad).
-            </p>
-          )}
-        </CardContent>
-        {playback && (
-          <CardFooter>
-            <VideoInteractionBar videoId={playback.video.id} />
-          </CardFooter>
+          </>
+        ) : (
+          <EmptyState icon={Droplets} message="Pick a video from the list to start watching" />
         )}
-      </Card>
+      </div>
 
-      {playback && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Comments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <VideoComments videoId={playback.video.id} />
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Public videos</CardTitle>
-          <CardDescription>
-            {videos.length} record(s) from the `video` collection.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {videos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No videos yet — run the seed script to upload media and create records.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {videos.map((v) => (
-                <li key={v.id}>
-                  <Link
-                    to="/video"
-                    search={{ id: v.id }}
-                    className="block rounded-md border px-3 py-2 hover:bg-accent"
-                  >
-                    <p className="font-medium">{v.title}</p>
-                    <p className="text-sm text-muted-foreground break-all">{v.url}</p>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+      <div className="flex flex-col gap-4">
+        <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-slate-300">
+          More videos
+        </h2>
+        {moreVideos.length === 0 ? (
+          <p className="text-sm text-slate-300">Nothing else in the tank yet.</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {moreVideos.map((video) => (
+              <VideoCard key={video.id} video={video} variant="list" />
+            ))}
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }
