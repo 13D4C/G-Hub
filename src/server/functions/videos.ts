@@ -1,9 +1,13 @@
 import { createServerFn } from '@tanstack/react-start'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
+import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
+import { requireUserId } from '@/server/auth/require-user'
+import { uploadObject } from '@/server/storage/seaweed'
 
 /**
  * Server functions only ever run on the server, so `mongoose` never reaches the
@@ -20,6 +24,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
     description: v.description,
     url: v.url,
     durationSeconds: v.durationSeconds,
+    visibility: v.visibility,
   }))
 })
 
@@ -32,6 +37,7 @@ export type PlaybackData = {
     description: string
     url: string
     durationSeconds: number
+    createdAt: string
   }
   preroll: PrerollAd | null
 }
@@ -65,7 +71,76 @@ export const getVideoById = createServerFn({ method: 'GET' })
         description: video.description,
         url: video.url,
         durationSeconds: video.durationSeconds,
+        createdAt: video.createdAt.toISOString(),
       },
       preroll,
     }
+  })
+
+export type MyVideo = {
+  id: string
+  title: string
+  description: string
+  url: string
+  durationSeconds: number
+  visibility: 'public' | 'private'
+  likeCount: number
+  shareCount: number
+  createdAt: string
+}
+
+export const listMyVideos = createServerFn({ method: 'GET' }).handler(async (): Promise<MyVideo[]> => {
+  const userId = await requireUserId()
+  await connectToDatabase()
+
+  const videos = await VideoModel.find({ uploadedBy: userId }).sort({ createdAt: -1 }).limit(100).lean()
+
+  return videos.map((v) => ({
+    id: String(v._id),
+    title: v.title,
+    description: v.description,
+    url: v.url,
+    durationSeconds: v.durationSeconds,
+    visibility: v.visibility,
+    likeCount: v.likeCount ?? 0,
+    shareCount: v.shareCount ?? 0,
+    createdAt: v.createdAt.toISOString(),
+  }))
+})
+
+export const createVideo = createServerFn({ method: 'POST' })
+  .validator((data: unknown) => {
+    if (!(data instanceof FormData)) throw new Error('Invalid form submission')
+    return data
+  })
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const userId = await requireUserId()
+
+    const file = data.get('file')
+    const title = String(data.get('title') ?? '').trim()
+    const description = String(data.get('description') ?? '').trim()
+    const visibility = data.get('visibility') === 'private' ? 'private' : 'public'
+
+    if (!(file instanceof File) || !file.type.startsWith('video/')) {
+      throw new Error(VIDEO_ERRORS.invalidFile)
+    }
+    if (!title) {
+      throw new Error(VIDEO_ERRORS.titleRequired)
+    }
+
+    await connectToDatabase()
+
+    const body = new Uint8Array(await file.arrayBuffer())
+    const key = `videos/${randomUUID()}-${file.name}`
+    const url = await uploadObject({ key, body, contentType: file.type })
+
+    const video = await VideoModel.create({
+      title,
+      description,
+      url,
+      visibility,
+      uploadedBy: userId,
+    })
+
+    return { id: String(video._id) }
   })

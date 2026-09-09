@@ -28,13 +28,20 @@ function matchesState(received: string, expected: string): boolean {
 /** Finds the account for a Google profile, linking or creating one as needed. */
 async function resolveUser(profile: GoogleProfile) {
   const existingByGoogleId = await UserModel.findOne({ googleId: profile.sub })
-  if (existingByGoogleId) return existingByGoogleId
+  if (existingByGoogleId) {
+    if (profile.avatarUrl && existingByGoogleId.avatarUrl !== profile.avatarUrl) {
+      existingByGoogleId.avatarUrl = profile.avatarUrl
+      await existingByGoogleId.save()
+    }
+    return existingByGoogleId
+  }
 
   // Google verified this email address, so it is safe to adopt an account that already uses it.
   const existingByEmail = await UserModel.findOne({ email: profile.email })
   if (existingByEmail) {
     existingByEmail.googleId = profile.sub
     if (!existingByEmail.name) existingByEmail.name = profile.name
+    if (profile.avatarUrl) existingByEmail.avatarUrl = profile.avatarUrl
     await existingByEmail.save()
     return existingByEmail
   }
@@ -43,6 +50,7 @@ async function resolveUser(profile: GoogleProfile) {
     email: profile.email,
     googleId: profile.sub,
     name: profile.name,
+    avatarUrl: profile.avatarUrl,
   })
 }
 

@@ -1,41 +1,89 @@
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
-import { Button } from '@/components/ui/button'
+import { LogOut } from 'lucide-react'
 import { meQueryOptions } from '@/lib/auth'
 import { logout } from '@/server/functions/auth'
+
+const FALLBACK_AVATAR = '/assets/skibidi.jpg'
+
+const avatarClassName =
+  'block size-9 shrink-0 overflow-hidden rounded-full ring-2 ring-white/70 transition hover:ring-primary'
 
 export function AuthNav() {
   const router = useRouter()
   const queryClient = useQueryClient()
   const { data: user } = useQuery(meQueryOptions)
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const signOut = useMutation({
     mutationFn: () => logout(),
     onSuccess: async () => {
+      setOpen(false)
       await queryClient.invalidateQueries({ queryKey: meQueryOptions.queryKey })
       await router.navigate({ to: '/' })
     },
   })
 
+  useEffect(() => {
+    if (!open) return
+
+    function onPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
   if (!user) {
     return (
-      <div className="flex items-center gap-2">
-        <Button asChild variant="ghost" size="sm">
-          <Link to="/login">Sign in</Link>
-        </Button>
-        <Button asChild size="sm">
-          <Link to="/register">Sign up</Link>
-        </Button>
-      </div>
+      <Link to="/login" aria-label="Sign in" className={avatarClassName}>
+        <img src={FALLBACK_AVATAR} alt="" className="size-full object-cover" />
+      </Link>
     )
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-sm text-muted-foreground">{user.name || user.email}</span>
-      <Button variant="outline" size="sm" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
-        {signOut.isPending ? 'Signing out…' : 'Sign out'}
-      </Button>
+    <div ref={rootRef} className="relative isolate z-50">
+      <button
+        type="button"
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={avatarClassName}
+      >
+        <img src={user.avatarUrl || FALLBACK_AVATAR} alt="" className="size-full object-cover" />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          className="absolute top-full right-0 z-50 mt-2 w-48 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        >
+          <p className="truncate px-2 py-1.5 text-sm font-medium">{user.name || user.email}</p>
+          <div className="-mx-1 my-1 h-px bg-border" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled={signOut.isPending}
+            onClick={() => signOut.mutate()}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive outline-none hover:bg-destructive/10 disabled:pointer-events-none disabled:opacity-50"
+          >
+            <LogOut className="size-4" />
+            {signOut.isPending ? 'Signing out…' : 'Sign out'}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
