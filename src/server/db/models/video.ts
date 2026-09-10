@@ -56,6 +56,12 @@ const videoSchema = new mongoose.Schema(
     // operators, so it would be inert against `$inc` and would only imply a
     // guarantee that isn't there.
     likeCount: { type: Number, default: 0 },
+    // Incremented once per successful `getVideoById`, which is the only path that
+    // hands out a playable url. Anonymous like shares, so no per-viewer document.
+    //
+    // ponytail: counts loads, not unique viewers — a reload counts again. Add a
+    // per-(viewer, video, day) collection if the number ever has to mean people.
+    viewCount: { type: Number, default: 0 },
     // Incremented by `recordShare`. Shares are anonymous, so unlike likes there is no
     // per-viewer document to store and no per-viewer state to render.
     shareCount: { type: Number, default: 0 },
