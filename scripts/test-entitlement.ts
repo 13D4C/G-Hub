@@ -31,6 +31,9 @@ for (const status of ['incomplete', 'past_due', 'unpaid', 'canceled', 'paused', 
 // even if the webhook that should have moved it to `past_due` never arrived.
 assert.equal(isEntitled({ status: 'active', currentPeriodEnd: past }, now), false)
 
+// The boundary itself is exclusive: the instant the period ends, it is over.
+assert.equal(isEntitled({ status: 'active', currentPeriodEnd: now }, now), false)
+
 // Before Stripe has billed a first period there is no end date; the status carries it.
 assert.equal(isEntitled({ status: 'active', currentPeriodEnd: null }, now), true)
 assert.equal(isEntitled({ status: 'active' }, now), true)
