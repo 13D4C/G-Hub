@@ -1,5 +1,5 @@
 /**
- * Messages the channel/billing server functions reject with. Mirrors
+ * Messages the channel, tipping and billing server functions reject with. Mirrors
  * `src/lib/auth-errors.ts` and `src/lib/interaction-errors.ts`: only these are
  * rendered, so a Stripe misconfiguration or API outage collapses to a generic
  * message instead of putting key names in front of a viewer.
@@ -11,6 +11,8 @@ export const CHANNEL_ERRORS = {
   cannotSubscribeToSelf: 'This is your own channel.',
   noSubscription: 'You do not have a subscription to manage yet.',
   checkoutNotComplete: 'That payment has not completed.',
+  cannotTipSelf: 'You cannot tip your own channel.',
+  invalidTipAmount: 'Enter an amount between $0.50 and $5,000.',
 
   // --- Membership tiers ---
   tierNotFound: 'That membership tier no longer exists.',

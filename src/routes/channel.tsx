@@ -5,6 +5,7 @@ import { EyeOff, Lock, Play, Tv } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '@/components/empty-state'
 import { MembershipTiersEditor } from '@/components/membership-tiers-editor'
+import { TipButton, TipNotice } from '@/components/tip-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -28,6 +29,12 @@ const channelSearchSchema = z.object({
   /** Set by Stripe when it returns the viewer here. */
   checkout: z.enum(['success', 'cancel']).optional().catch(undefined),
   session_id: z.string().optional().catch(undefined),
+  /**
+   * Set by Stripe when it returns a viewer here after a one-time tip. It shares
+   * `session_id` with the subscription return above — the two never arrive
+   * together, since one checkout produces one redirect.
+   */
+  tip: z.enum(['success', 'cancel']).optional().catch(undefined),
 })
 
 export const Route = createFileRoute('/channel')({
@@ -157,6 +164,19 @@ function ChannelPage() {
           </p>
         )}
 
+        {/* Only once someone has actually tipped — a channel sitting at "$0.00 in
+            tips" reads worse than a channel saying nothing. */}
+        {channel.tipTotalCents > 0 ? (
+          <p className="text-sm text-slate-500">
+            <span className="font-semibold text-slate-900">
+              {formatPrice(channel.tipTotalCents, channel.currency)}
+            </span>{' '}
+            in tips from viewers.
+          </p>
+        ) : null}
+
+        <TipNotice tip={search.tip} sessionId={search.session_id} />
+
         {/* Stripe redirects back mid-payment; say so rather than showing a bare
             "Subscribe" as if nothing had happened. */}
         {search.checkout === 'cancel' ? (
@@ -181,18 +201,32 @@ function ChannelPage() {
           </p>
         ) : null}
 
-        {/* Only the subscriber's own billing link lives up here now. Buying is a
-            per-tier act, so its buttons belong on the tier cards below. */}
-        {channel.isOwner || !channel.subscribed ? null : (
-          <div>
-            <Button
-              variant="outline"
-              className="rounded-full"
-              onClick={() => manage.mutate()}
-              disabled={manage.isPending}
-            >
-              {manage.isPending ? 'Opening…' : 'Manage subscription'}
-            </Button>
+        {channel.isOwner ? null : (
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Buying is a per-tier act, so the Subscribe buttons live on the tier
+                cards below; only the subscriber's own billing link belongs here. */}
+            {channel.subscribed ? (
+              <Button
+                variant="outline"
+                className="rounded-full"
+                onClick={() => manage.mutate()}
+                disabled={manage.isPending}
+              >
+                {manage.isPending ? 'Opening…' : 'Manage subscription'}
+              </Button>
+            ) : null}
+
+            {/* Tipping needs no subscription and no tier — it is open even on a
+                channel that sells nothing. Signed-out viewers get their sign-in
+                link on the tier cards, so this stays out of their way. */}
+            {viewerId ? (
+              <TipButton
+                creatorId={channel.creatorId}
+                creatorName={channel.name}
+                currency={channel.currency}
+                redirect={`/channel?id=${channel.creatorId}`}
+              />
+            ) : null}
           </div>
         )}
       </Card>
