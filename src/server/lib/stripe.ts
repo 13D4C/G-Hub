@@ -2,9 +2,13 @@ import Stripe from 'stripe'
 import { getRequest } from '@tanstack/react-start/server'
 
 /**
- * Stripe wiring for the billing sandbox. Mirrors `src/server/auth/google.ts`: the
+ * Stripe wiring for channel subscriptions. Mirrors `src/server/auth/google.ts`: the
  * environment is read lazily inside getters, so an app running without billing
- * configured still boots and only the billing routes fail.
+ * configured still boots and only the billing paths fail.
+ *
+ * There is no STRIPE_PRICE_ID here on purpose — every channel prices itself, so
+ * `startChannelCheckout` builds the recurring price inline from the creator's row
+ * rather than requiring a Price object per creator in the dashboard.
  */
 
 let client: Stripe | null = null
@@ -31,15 +35,6 @@ export function getStripe(): Stripe {
 
   client = new Stripe(secretKey)
   return client
-}
-
-/** The recurring price the subscribe button checks out. Created in the Stripe test dashboard. */
-export function getPriceId(): string {
-  const priceId = process.env.STRIPE_PRICE_ID
-  if (!priceId) {
-    throw new Error('STRIPE_PRICE_ID is not set. Add it to your .env file (see .env.example).')
-  }
-  return priceId
 }
 
 /** Signing secret for `/api/stripe/webhook`, printed by `stripe listen`. */

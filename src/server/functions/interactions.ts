@@ -52,6 +52,13 @@ function isDuplicateKeyError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 11000
 }
 
+/**
+ * Interactions are only accepted on videos a viewer is actually allowed to watch —
+ * the same `requirePlayableVideo` that gates playback, so a premium video's like
+ * count and comment thread cannot be read by a non-subscriber guessing an ObjectId,
+ * and a subscriber is never able to watch a video but not like it.
+ */
+
 export type InteractionSummary = {
   videoId: string
   likeCount: number
@@ -291,21 +298,18 @@ export const deleteComment = createServerFn({ method: 'POST' })
   })
 
 /**
- * Count a share. Sign-in is not required — sharing a link is not an account action
- * and there is no per-viewer share state to render — but the session is still read,
- * because a subscriber sharing a private video must not be told it does not exist.
- *
- * Two queries rather than the single atomic `findOneAndUpdate` this used when the
- * rule was just `visibility: 'public'`: the gate now depends on the viewer's plan,
- * which no Mongo filter on the video alone can express. The `$inc` is still atomic;
- * only the gap between gate and increment is new, and losing that race means the
- * video was deleted mid-share.
+ * Count a share. Still unauthenticated by design — sharing a link is not an account
+ * action, and there is no per-viewer share state to render — but the video itself
+ * must be one this caller may watch.
  */
 export const recordShare = createServerFn({ method: 'POST' })
   .validator(videoIdSchema)
   .handler(async ({ data }): Promise<{ shareCount: number }> => {
     const viewerId = await getUserId()
     await connectToDatabase()
+
+    // Gated like every other interaction: a premium video's share link is only worth
+    // anything to someone who can already watch it.
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     const updated = await VideoModel.findByIdAndUpdate(
@@ -314,5 +318,5 @@ export const recordShare = createServerFn({ method: 'POST' })
       { returnDocument: 'after', projection: { shareCount: 1 } },
     ).lean()
 
-    return { shareCount: updated?.shareCount ?? video.shareCount ?? 0 }
+    return { shareCount: updated?.shareCount ?? 0 }
   })
