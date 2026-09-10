@@ -18,12 +18,20 @@ import { hasActiveChannelSubscription, requirePlayableVideo } from '@/server/lib
 export type VideoChannel = {
   creatorId: string
   name: string
+  /** What this creator prices in, so the tip dialog offers the right symbol. */
+  currency: string
 }
 
-function channelFrom(creator: { _id: unknown; name?: string; channelName?: string }): VideoChannel {
+function channelFrom(creator: {
+  _id: unknown
+  name?: string
+  channelName?: string
+  channelCurrency?: string
+}): VideoChannel {
   return {
     creatorId: String(creator._id),
     name: creator.channelName || creator.name || 'Untitled channel',
+    currency: creator.channelCurrency || 'usd',
   }
 }
 
@@ -36,7 +44,7 @@ function channelFrom(creator: { _id: unknown; name?: string; channelName?: strin
 async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
   if (!uploadedBy) return null
 
-  const creator = await UserModel.findById(uploadedBy).select('name channelName').lean()
+  const creator = await UserModel.findById(uploadedBy).select('name channelName channelCurrency').lean()
   return creator ? channelFrom(creator) : null
 }
 
@@ -63,7 +71,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
   // CastError that takes the whole home page down.
   const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
   const creators = await UserModel.find({ _id: { $in: creatorIds } })
-    .select('name channelName')
+    .select('name channelName channelCurrency')
     .lean()
   const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 
@@ -136,6 +144,12 @@ export const getVideoById = createServerFn({ method: 'GET' })
 
     const { video, subscribed } = await requirePlayableVideo(data.videoId, viewerId)
     const preroll = video.adsEnabled && !subscribed ? await pickPrerollAd() : null
+
+    // The one place a view is counted: this is the only handler that hands out a
+    // playable `url`, so a locked video never scores a view and no other caller has
+    // to remember to increment. `$inc` rather than a read-modify-write so concurrent
+    // viewers cannot overwrite each other.
+    await VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } })
 
     return {
       video: {

@@ -3,18 +3,23 @@ import type Stripe from 'stripe'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getStripe, getWebhookSecret } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
+import { settleTipSession } from '@/server/lib/tip-settle'
 
 /**
- * Stripe's view of a channel subscription, pushed to us.
+ * Stripe's view of a channel subscription or a tip, pushed to us.
  *
  * Run `stripe listen --forward-to localhost:3000/api/stripe/webhook` in development
  * and put the `whsec_...` it prints in STRIPE_WEBHOOK_SECRET.
  *
  * Only `customer.subscription.*` and `checkout.session.completed` are handled, and
  * neither is trusted for its contents — both are treated purely as a nudge to
- * re-read the subscription from Stripe (see `syncSubscription`). Invoice events are
- * deliberately not handled: a failed payment moves the subscription's status, which
- * arrives here as `customer.subscription.updated` anyway.
+ * re-read the object from Stripe (see `syncSubscription` and `settleTipSession`).
+ * Invoice events are deliberately not handled: a failed payment moves the
+ * subscription's status, which arrives here as `customer.subscription.updated`
+ * anyway.
+ *
+ * `checkout.session.completed` covers both products, split on the session's `mode`:
+ * `subscription` is a channel subscription, `payment` is a one-time tip.
  *
  * This is the durable path. `confirmChannelCheckout` runs the same sync when the
  * viewer lands back from Checkout so the unlock is immediate, but a viewer who never
@@ -65,12 +70,21 @@ export const Route = createFileRoute('/api/stripe/webhook')({
           return new Response('Invalid signature', { status: 400 })
         }
 
+        // Thrown errors below deliberately escape as a 500: Stripe retries with
+        // backoff, which is exactly what a transient Mongo or Stripe failure needs.
+
+        // A tip. This is its only settlement path — unlike a subscription, nothing
+        // confirms it inline when the viewer returns, because a tip unlocks nothing.
+        if (event.type === 'checkout.session.completed' && event.data.object.mode === 'payment') {
+          await connectToDatabase()
+          await settleTipSession(event.data.object.id)
+          return new Response(null, { status: 204 })
+        }
+
         const subscriptionId = subscriptionIdOf(event)
         // An event we do not act on still gets a 200, or Stripe retries it for days.
         if (!subscriptionId) return new Response(null, { status: 204 })
 
-        // Thrown errors deliberately escape as a 500: Stripe retries with backoff,
-        // which is exactly what a transient Mongo or Stripe API failure needs.
         await connectToDatabase()
         await syncSubscription(subscriptionId)
 

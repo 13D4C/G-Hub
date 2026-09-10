@@ -12,8 +12,11 @@
     "preview": "vite preview",
     "seed": "node --env-file=.env --experimental-strip-types scripts/seed.ts",
     "recount-likes": "node --env-file=.env --experimental-strip-types scripts/recount-likes.ts",
+    "settle-tips": "node --env-file=.env --experimental-strip-types scripts/settle-tips.ts",
     "test:entitlement": "node --experimental-strip-types scripts/test-entitlement.ts",
-    "test:channel-gate": "node --env-file=.env --experimental-strip-types scripts/test-channel-gate.ts"
+    "test:channel-gate": "node --env-file=.env --experimental-strip-types scripts/test-channel-gate.ts",
+    "test:tips": "node --experimental-strip-types scripts/test-tips.ts",
+    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
