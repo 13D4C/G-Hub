@@ -14,6 +14,20 @@ const videoSchema = new mongoose.Schema(
     durationSeconds: { type: Number, default: 0 },
     // `private` means premium: playable only by an active subscriber of `uploadedBy`.
     visibility: { type: String, enum: ['public', 'private'], default: 'public', index: true },
+    /**
+     * The membership tier this video is gated behind, or null for "any active
+     * subscriber". Only consulted when `visibility` is `private` — a public video is
+     * open to everyone and a tier on it would be a rule nothing reads.
+     *
+     * Holding a *higher* tier opens it too; the ladder comparison lives in
+     * `src/server/lib/tier-access.ts`. Null is the default so every video that
+     * existed before tiers keeps behaving exactly as it did.
+     */
+    requiredTierId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'membershipTier',
+      default: null,
+    },
     // Whether a preroll ad is served before this video.
     adsEnabled: { type: Boolean, default: true },
     // Denormalized from the `videolikes` collection, which stays the source of truth.

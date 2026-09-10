@@ -3,10 +3,12 @@ import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
+import { MembershipTierModel } from '@/server/db/models/membership-tier'
 import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
-import { isEntitled } from '@/server/lib/entitlement'
+import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
+import { isEntitled, loadTierRanks, tierRefOf, tierUnlocks } from '@/server/lib/entitlement'
 import { getAppUrl, getStripe } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
@@ -29,6 +31,12 @@ import { syncSubscription } from '@/server/lib/subscription-sync'
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id')
 
 const channelIdSchema = z.object({ creatorId: objectId })
+/**
+ * Which rung of the channel's ladder to buy. Omitted (or null) means the
+ * channel-level subscription priced on the creator's own row — still the only thing
+ * on offer from a creator who has not built a ladder.
+ */
+const checkoutSchema = z.object({ creatorId: objectId, tierId: objectId.nullish() })
 const confirmSchema = z.object({ creatorId: objectId, sessionId: z.string().min(1).max(200) })
 
 function channelPath(creatorId: string): string {
@@ -44,6 +52,10 @@ export type ChannelVideo = {
   premium: boolean
   /** False when this viewer may not play it, which is what draws the lock. */
   unlocked: boolean
+  /** The tier this video is gated behind, or null for "any active subscriber". */
+  requiredTierId: string | null
+  /** That tier's name, so a locked row can say what would open it. Empty when ungated. */
+  requiredTierName: string
 }
 
 export type ChannelView = {
@@ -62,6 +74,16 @@ export type ChannelView = {
   cancelAtPeriodEnd: boolean
   /** The viewer owns this channel, so there is nothing to sell them. */
   isOwner: boolean
+  /**
+   * The channel's membership ladder, lowest rung first. Empty for a creator who
+   * sells one flat subscription (or nothing), which is what every channel was
+   * before tiers.
+   */
+  tiers: Array<MembershipTierView>
+  /** The rung this viewer is on, or null for a channel-level or absent subscription. */
+  viewerTierId: string | null
+  /** Its name as it read at checkout, for the "Subscribed" line. */
+  viewerTierName: string
   videos: Array<ChannelVideo>
 }
 
@@ -95,11 +117,27 @@ export const getChannel = createServerFn({ method: 'GET' })
     // Premium videos are listed to everyone: the point of a paywall is that a viewer
     // can see what they would be buying. Only the media `url` is withheld, and it is
     // never selected here — playback goes through `getVideoById`, which re-checks.
-    const videos = await VideoModel.find({ uploadedBy: creator._id })
-      .select('title description durationSeconds visibility')
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean()
+    const [tiers, videos] = await Promise.all([
+      readLadder(creator._id),
+      VideoModel.find({ uploadedBy: creator._id })
+        .select('title description durationSeconds visibility requiredTierId')
+        .sort({ createdAt: -1 })
+        .limit(100)
+        .lean(),
+    ])
+
+    const viewerTierId = sub?.tierId ? String(sub.tierId) : null
+
+    // Ranks for every tier this page compares against, in one query. The ladder is
+    // already loaded, but a video can be gated behind an *archived* tier and a
+    // viewer can hold one, and neither appears in `tiers`.
+    const ranks = await loadTierRanks([
+      viewerTierId,
+      ...tiers.map((t) => t.id),
+      ...videos.map((v) => v.requiredTierId),
+    ])
+    const tierNameById = new Map(tiers.map((t) => [t.id, t.name]))
+    const heldTier = tierRefOf(viewerTierId, ranks)
 
     return {
       creatorId: String(creator._id),
@@ -112,15 +150,34 @@ export const getChannel = createServerFn({ method: 'GET' })
       currentPeriodEnd: sub?.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
       isOwner,
+      tiers,
+      viewerTierId,
+      viewerTierName: sub?.tierName ?? '',
       videos: videos.map((v) => {
         const premium = v.visibility !== 'public'
+        const requiredTierId = v.requiredTierId ? String(v.requiredTierId) : null
+        // The same two-part rule as `requirePlayableVideo`: subscribed at all, and
+        // then high enough on the ladder. The owner clears both by right.
+        const unlocked =
+          !premium ||
+          isOwner ||
+          (subscribed && tierUnlocks(heldTier, tierRefOf(requiredTierId, ranks)))
+
         return {
           id: String(v._id),
           title: v.title,
           description: v.description,
           durationSeconds: v.durationSeconds,
           premium,
-          unlocked: !premium || subscribed,
+          unlocked,
+          requiredTierId,
+          // Archived tiers are gone from the ladder but their gates still stand;
+          // naming one is better than an unexplained lock, so fall back to the
+          // subscription's own snapshot of the name where we have it.
+          requiredTierName: requiredTierId
+            ? (tierNameById.get(requiredTierId) ??
+              (requiredTierId === viewerTierId ? (sub?.tierName ?? '') : ''))
+            : '',
         }
       }),
     }
@@ -191,15 +248,23 @@ async function ensureCustomerId(userId: string): Promise<string> {
 }
 
 /**
- * Start a hosted Checkout for this channel's monthly subscription and return the URL
- * to send the browser to. The client redirects; nothing is charged here.
+ * Start a hosted Checkout for one of this channel's monthly subscriptions and return
+ * the URL to send the browser to. The client redirects; nothing is charged here.
  *
- * The recurring price is built inline from the creator's row rather than referencing
- * a Price object, so a creator can name their own fee without anyone touching the
- * Stripe dashboard.
+ * `tierId` picks a rung of the creator's membership ladder; without it the viewer
+ * buys the flat channel subscription priced on the creator's own row. Either way the
+ * recurring price is built inline rather than referencing a Price object, so a
+ * creator can name their own fees — one, or one per tier — without anyone touching
+ * the Stripe dashboard.
+ *
+ * There is deliberately no upgrade path here: a viewer who is already entitled is
+ * turned away rather than sold a second subscription, because the unique
+ * `(subscriberId, creatorId)` row can hold only one while Stripe would bill both.
+ * Moving between tiers means cancelling in the billing portal first, and the channel
+ * page says so.
  */
 export const startChannelCheckout = createServerFn({ method: 'POST' })
-  .validator(channelIdSchema)
+  .validator(checkoutSchema)
   .handler(async ({ data }): Promise<{ url: string }> => {
     const subscriberId = await requireUserId()
     await connectToDatabase()
@@ -211,7 +276,19 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
       .lean()
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
-    const priceCents = creator.subscriptionPriceCents ?? 0
+    // The tier must belong to *this* creator and still be on sale. Otherwise a
+    // hand-edited request could buy a cheap tier from one channel and have it
+    // recorded against another, which the gate would then honour.
+    const tier = data.tierId
+      ? await MembershipTierModel.findOne({
+          _id: data.tierId,
+          creatorId: creator._id,
+          active: true,
+        }).lean()
+      : null
+    if (data.tierId && !tier) throw new Error(CHANNEL_ERRORS.tierNotFound)
+
+    const priceCents = tier ? tier.priceCents : (creator.subscriptionPriceCents ?? 0)
     if (priceCents <= 0) throw new Error(CHANNEL_ERRORS.notAcceptingSubscribers)
 
     const existing = await ChannelSubscriptionModel.findOne({
@@ -221,17 +298,29 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
     // Stripe would happily create a second, separately billed subscription.
     if (isEntitled(existing ?? null)) throw new Error(CHANNEL_ERRORS.alreadySubscribed)
 
-    const currency = creator.channelCurrency || 'usd'
+    const currency = (tier ? tier.currency : creator.channelCurrency) || 'usd'
     const customerId = await ensureCustomerId(subscriberId)
     const channelName = creator.channelName || creator.name || 'Channel'
     const creatorId = String(creator._id)
+    const tierId = tier ? String(tier._id) : ''
+    const tierName = tier ? tier.name : ''
 
     // Written before the handoff so the channel page can say "payment pending"
     // rather than nothing if the viewer comes back before Stripe does. Upsert,
     // because a previous lapsed subscription to the same channel leaves a row.
+    //
+    // The tier is written here as well as in `syncSubscription`, and is explicitly
+    // cleared for a channel-level purchase: a lapsed row left over from an earlier
+    // tier would otherwise go on naming that tier while the new payment settles.
     await ChannelSubscriptionModel.findOneAndUpdate(
       { subscriberId, creatorId: creator._id },
-      { stripeCustomerId: customerId, priceCents, currency },
+      {
+        stripeCustomerId: customerId,
+        priceCents,
+        currency,
+        tierId: tier?._id ?? null,
+        tierName,
+      },
       { upsert: true, setDefaultsOnInsert: true },
     )
 
@@ -246,13 +335,19 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
             currency,
             unit_amount: priceCents,
             recurring: { interval: 'month' },
-            product_data: { name: `${channelName} — channel subscription` },
+            product_data: {
+              name: tier
+                ? `${channelName} — ${tier.name}`
+                : `${channelName} — channel subscription`,
+            },
           },
         },
       ],
       // Stamped server-side onto the subscription itself, which is the only thing
-      // later webhooks carry. `syncSubscription` reads the pair back out of here.
-      subscription_data: { metadata: { subscriberId, creatorId } },
+      // later webhooks carry. `syncSubscription` reads all of it back out of here,
+      // so a webhook arriving without the viewer ever returning still records which
+      // tier was bought.
+      subscription_data: { metadata: { subscriberId, creatorId, tierId, tierName } },
       success_url: `${appUrl}${channelPath(creatorId)}&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}${channelPath(creatorId)}&checkout=cancel`,
     })

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CloudUpload, Globe, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { describeMutationError } from '@/lib/auth'
+import { myMembershipTiersQueryOptions } from '@/lib/membership-tiers'
 import { myVideosQueryOptions } from '@/lib/videos'
 import { createVideo } from '@/server/functions/videos'
 
@@ -15,8 +16,14 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [visibility, setVisibility] = useState<'public' | 'private'>('public')
+  /** Empty means "any active subscriber", which is what premium meant before tiers. */
+  const [requiredTierId, setRequiredTierId] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
+
+  // The uploader's own ladder. Fetched unconditionally rather than only once
+  // "Private" is picked, so choosing it does not blank the select for a round trip.
+  const { data: tiers } = useQuery(myMembershipTiersQueryOptions)
 
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
   useEffect(() => {
@@ -76,6 +83,11 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
     formData.set('title', title)
     formData.set('description', description)
     formData.set('visibility', visibility)
+    // Sent only for a premium upload; the server drops it for a public one anyway,
+    // but leaving it out keeps the request saying exactly what the form shows.
+    if (visibility === 'private' && requiredTierId) {
+      formData.set('requiredTierId', requiredTierId)
+    }
     uploadMutation.mutate(formData)
   }
 
@@ -187,6 +199,34 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
           </Button>
         </div>
       </div>
+
+      {/* Only meaningful for a premium upload — a tier on a public video is a rule
+          nothing reads, so the control does not exist for one. */}
+      {visibility === 'private' ? (
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-slate-700" htmlFor="requiredTierId">
+            Required membership tier
+          </label>
+          <select
+            id="requiredTierId"
+            value={requiredTierId}
+            onChange={(e) => setRequiredTierId(e.target.value)}
+            className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+          >
+            <option value="">Any subscriber</option>
+            {tiers?.map((tier) => (
+              <option key={tier.id} value={tier.id}>
+                {tier.name} (level {tier.rank})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-500">
+            {tiers && tiers.length > 0
+              ? 'Subscribers on this tier or any higher one can watch.'
+              : 'You have no membership tiers yet — add them on your channel page to gate videos by tier.'}
+          </p>
+        </div>
+      ) : null}
 
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 

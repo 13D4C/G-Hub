@@ -4,12 +4,14 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Lock, Play, Tv } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '@/components/empty-state'
+import { MembershipTiersEditor } from '@/components/membership-tiers-editor'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { describeMutationError, meQueryOptions } from '@/lib/auth'
+import { cn } from '@/lib/utils'
 import { channelKeys, channelQueryOptions, formatPeriodEnd, formatPrice } from '@/lib/channels'
 import {
   confirmChannelCheckout,
@@ -18,6 +20,8 @@ import {
   updateChannelSettings,
 } from '@/server/functions/channels'
 import type { ChannelVideo, ChannelView } from '@/server/functions/channels'
+import { describeTierAccess } from '@/lib/membership-tiers'
+import type { MembershipTierView } from '@/server/functions/membership-tiers'
 
 const channelSearchSchema = z.object({
   id: z.string(),
@@ -52,8 +56,12 @@ function ChannelPage() {
   const refreshChannel = () =>
     queryClient.invalidateQueries({ queryKey: channelKeys.detailPrefix(search.id) })
 
+  // The tier is the argument, not the channel: one button per rung, all going
+  // through the same Checkout. `null` buys the flat channel subscription, which is
+  // still all a creator without a ladder has to sell.
   const subscribe = useMutation({
-    mutationFn: () => startChannelCheckout({ data: { creatorId: search.id } }),
+    mutationFn: (tierId: string | null) =>
+      startChannelCheckout({ data: { creatorId: search.id, tierId } }),
     // A full page assignment, not a router navigation: Checkout is Stripe's origin.
     onSuccess: (result) => {
       window.location.href = result.url
@@ -101,6 +109,10 @@ function ChannelPage() {
   const priced = channel.priceCents > 0
   const price = formatPrice(channel.priceCents, channel.currency)
   const premiumCount = channel.videos.filter((v) => v.premium).length
+  // A channel with a ladder sells the rungs; the flat price is only the fallback for
+  // one that has not built one. Never both at once, or a viewer has two prices for
+  // overlapping things and no way to tell which they are buying.
+  const hasTiers = channel.tiers.length > 0
 
   const errorMessage = subscribe.isError
     ? describeMutationError(subscribe.error, 'Could not start checkout. Please try again.')
@@ -125,7 +137,9 @@ function ChannelPage() {
 
         {channel.isOwner ? null : channel.subscribed ? (
           <p className="text-sm text-slate-700">
-            <span className="font-semibold text-primary">Subscribed</span>
+            <span className="font-semibold text-primary">
+              Subscribed{channel.viewerTierName ? ` — ${channel.viewerTierName}` : ''}
+            </span>
             {channel.currentPeriodEnd ? (
               <span className="text-slate-500">
                 {' '}
@@ -133,6 +147,10 @@ function ChannelPage() {
                 {formatPeriodEnd(channel.currentPeriodEnd)}
               </span>
             ) : null}
+          </p>
+        ) : hasTiers ? (
+          <p className="text-sm text-slate-500">
+            Choose a membership tier below to unlock this channel's premium videos.
           </p>
         ) : priced ? (
           <p className="text-sm text-slate-500">
@@ -173,7 +191,7 @@ function ChannelPage() {
             {!viewerId ? (
               <Button asChild className="rounded-full">
                 <Link to="/login" search={{ redirect: `/channel?id=${channel.creatorId}` }}>
-                  Sign in to subscribe{priced ? ` — ${price}/month` : ''}
+                  Sign in to subscribe{!hasTiers && priced ? ` — ${price}/month` : ''}
                 </Link>
               </Button>
             ) : channel.subscribed ? (
@@ -185,10 +203,10 @@ function ChannelPage() {
               >
                 {manage.isPending ? 'Opening…' : 'Manage subscription'}
               </Button>
-            ) : (
+            ) : hasTiers ? null : (
               <Button
                 className="rounded-full"
-                onClick={() => subscribe.mutate()}
+                onClick={() => subscribe.mutate(null)}
                 disabled={!priced || subscribe.isPending || confirm.isPending}
               >
                 {subscribe.isPending ? 'Redirecting…' : `Subscribe — ${price}/month`}
@@ -198,7 +216,27 @@ function ChannelPage() {
         )}
       </Card>
 
-      {channel.isOwner ? <ChannelSettings channel={channel} onSaved={refreshChannel} /> : null}
+      {/* The ladder itself, for anyone who is not its owner — including signed-out
+          viewers, who need to see what is on sale before being asked to sign in. */}
+      {!channel.isOwner && hasTiers ? (
+        <TierPicker
+          channel={channel}
+          viewerId={viewerId}
+          busy={subscribe.isPending || confirm.isPending}
+          onSubscribe={(tierId) => subscribe.mutate(tierId)}
+        />
+      ) : null}
+
+      {channel.isOwner ? (
+        <>
+          <ChannelSettings channel={channel} onSaved={refreshChannel} />
+          <MembershipTiersEditor
+            tiers={channel.tiers}
+            currency={channel.currency}
+            onChanged={refreshChannel}
+          />
+        </>
+      ) : null}
 
       <Card className="flex flex-col gap-4 p-6">
         <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
@@ -210,7 +248,7 @@ function ChannelPage() {
           <ul className="flex flex-col gap-2">
             {channel.videos.map((video) => (
               <li key={video.id}>
-                <ChannelVideoRow video={video} />
+                <ChannelVideoRow video={video} subscribed={channel.subscribed} />
               </li>
             ))}
           </ul>
@@ -329,11 +367,134 @@ function ChannelSettings({
 }
 
 /**
+ * The rungs of the ladder, as a viewer sees them: cheapest first, each its own
+ * Checkout.
+ *
+ * Signed-out viewers get the same cards with a sign-in link, so the prices are
+ * readable before an account exists — a paywall nobody can read is not a paywall.
+ */
+function TierPicker({
+  channel,
+  viewerId,
+  busy,
+  onSubscribe,
+}: {
+  channel: ChannelView
+  viewerId: string | null
+  busy: boolean
+  onSubscribe: (tierId: string) => void
+}) {
+  return (
+    <Card className="flex flex-col gap-4 p-6">
+      <div className="flex flex-col gap-1">
+        <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
+          Membership tiers
+        </h2>
+        <p className="text-sm text-slate-500">
+          Each tier unlocks its own videos plus everything in the tiers below it.
+        </p>
+      </div>
+
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {channel.tiers.map((tier) => (
+          <li key={tier.id}>
+            <TierCard
+              tier={tier}
+              tiers={channel.tiers}
+              viewerId={viewerId}
+              creatorId={channel.creatorId}
+              held={channel.viewerTierId === tier.id}
+              subscribed={channel.subscribed}
+              busy={busy}
+              onSubscribe={() => onSubscribe(tier.id)}
+            />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  )
+}
+
+/**
+ * One rung on sale.
+ *
+ * A viewer who already subscribes to *another* tier is shown the price but no
+ * button: `startChannelCheckout` would reject them, because one row and one Stripe
+ * subscription per channel means switching has to go through a cancellation first.
+ * Saying that here is better than a button that only fails.
+ */
+function TierCard({
+  tier,
+  tiers,
+  viewerId,
+  creatorId,
+  held,
+  subscribed,
+  busy,
+  onSubscribe,
+}: {
+  tier: MembershipTierView
+  tiers: Array<MembershipTierView>
+  viewerId: string | null
+  creatorId: string
+  held: boolean
+  subscribed: boolean
+  busy: boolean
+  onSubscribe: () => void
+}) {
+  return (
+    <div
+      className={cn(
+        'flex h-full flex-col gap-2 rounded-xl border p-4',
+        held && 'border-primary bg-primary/5',
+      )}
+    >
+      <p className="flex items-center gap-2 font-medium text-slate-900">
+        {tier.name}
+        {held ? (
+          <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-normal text-white">
+            Your tier
+          </span>
+        ) : null}
+      </p>
+      <p className="text-sm text-slate-500">
+        <span className="text-xl font-semibold text-slate-900">
+          {formatPrice(tier.priceCents, tier.currency)}
+        </span>{' '}
+        / month
+      </p>
+      {tier.description ? <p className="text-sm text-slate-500">{tier.description}</p> : null}
+      <p className="text-xs text-slate-400">{describeTierAccess(tier, tiers)}</p>
+
+      <div className="mt-auto pt-2">
+        {!viewerId ? (
+          <Button asChild variant="outline" size="sm" className="rounded-full">
+            <Link to="/login" search={{ redirect: `/channel?id=${creatorId}` }}>
+              Sign in to subscribe
+            </Link>
+          </Button>
+        ) : held ? (
+          <p className="text-xs text-slate-500">You are on this tier.</p>
+        ) : subscribed ? (
+          <p className="text-xs text-slate-500">
+            Cancel your current subscription in the billing portal to switch tiers.
+          </p>
+        ) : (
+          <Button size="sm" className="rounded-full" disabled={busy} onClick={onSubscribe}>
+            {busy ? 'Redirecting…' : 'Subscribe'}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
  * One catalogue row. A locked video is deliberately still listed and still named —
  * it is the thing being sold — but it is not a link, because there is nothing behind
  * it for this viewer yet.
  */
-function ChannelVideoRow({ video }: { video: ChannelVideo }) {
+function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribed: boolean }) {
   const body = (
     <>
       <p className="flex items-center gap-2 font-medium text-slate-900">
@@ -347,7 +508,7 @@ function ChannelVideoRow({ video }: { video: ChannelVideo }) {
         {video.title}
         {video.premium ? (
           <span className="rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
-            Premium
+            {video.requiredTierName || 'Premium'}
           </span>
         ) : null}
       </p>
@@ -356,10 +517,18 @@ function ChannelVideoRow({ video }: { video: ChannelVideo }) {
   )
 
   if (!video.unlocked) {
+    // A viewer who is already paying needs to hear "upgrade", not "subscribe" — the
+    // same distinction `tierRequired` draws on the server.
+    const call = video.requiredTierName
+      ? subscribed
+        ? `Needs the ${video.requiredTierName} tier.`
+        : `Subscribe at ${video.requiredTierName} or higher to watch.`
+      : 'Subscribe to watch.'
+
     return (
       <div className="rounded-xl border border-dashed px-3 py-2 opacity-70">
         {body}
-        <p className="text-sm text-slate-500">Subscribe to watch.</p>
+        <p className="text-sm text-slate-500">{call}</p>
       </div>
     )
   }

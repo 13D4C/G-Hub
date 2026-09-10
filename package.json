@@ -13,7 +13,9 @@
     "seed": "node --env-file=.env --experimental-strip-types scripts/seed.ts",
     "recount-likes": "node --env-file=.env --experimental-strip-types scripts/recount-likes.ts",
     "test:entitlement": "node --experimental-strip-types scripts/test-entitlement.ts",
-    "test:channel-gate": "node --env-file=.env --experimental-strip-types scripts/test-channel-gate.ts"
+    "test:channel-gate": "node --env-file=.env --experimental-strip-types scripts/test-channel-gate.ts",
+    "test:tier-access": "node --experimental-strip-types scripts/test-tier-access.ts",
+    "test:membership-tier": "node --env-file=.env --experimental-strip-types scripts/test-membership-tier.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",

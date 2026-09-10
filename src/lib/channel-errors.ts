@@ -11,6 +11,15 @@ export const CHANNEL_ERRORS = {
   cannotSubscribeToSelf: 'This is your own channel.',
   noSubscription: 'You do not have a subscription to manage yet.',
   checkoutNotComplete: 'That payment has not completed.',
+
+  // --- Membership tiers ---
+  tierNotFound: 'That membership tier no longer exists.',
+  tierLimitReached: 'You have reached the maximum number of membership tiers.',
+  duplicateTierName: 'You already have a tier with that name.',
+  // A creator's own ladder only. Renaming, repricing or gating with someone else's
+  // tier is rejected as "not found" rather than "not yours": whether another
+  // creator's tier exists is not this caller's business.
+  tierNotYours: 'That membership tier no longer exists.',
 } as const
 
 const USER_FACING = new Set<string>(Object.values(CHANNEL_ERRORS))
