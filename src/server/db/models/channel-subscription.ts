@@ -36,9 +36,14 @@ const channelSubscriptionSchema = new mongoose.Schema(
     currentPeriodEnd: { type: Date, default: null },
     cancelAtPeriodEnd: { type: Boolean, default: false },
     /**
-     * The membership tier this subscription pays for, or null for a channel-level
-     * subscription bought at `user.subscriptionPriceCents` (including every
-     * subscription written before tiers existed).
+     * The membership tier this subscription pays for. Always set on anything bought
+     * since tiers became the only thing a channel sells; null survives only on rows
+     * written against the old flat channel price.
+     *
+     * Such a row still counts as an active subscription — it was paid for — but
+     * opens no tier-gated video, because it names no rung to compare. See
+     * `tierUnlocks`, and `scripts/migrate-channel-price-to-tier.ts`, which moves
+     * these onto a real tier.
      *
      * A reference, not a rank snapshot: the rank is read from the tier row at check
      * time so a creator reordering their ladder moves every subscriber with it.

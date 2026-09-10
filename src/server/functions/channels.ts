@@ -14,8 +14,13 @@ import { getAppUrl, getStripe } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
 /**
- * A creator's channel: its profile, its videos, and the paid subscription that
- * unlocks the premium ones.
+ * A creator's channel: its profile, its videos, and the membership tiers that unlock
+ * the subscriber-only ones.
+ *
+ * A channel sells tiers and nothing else. It used to also carry a single flat price
+ * of its own, which meant two systems could sell access to the same videos and
+ * disagree about what a subscriber had bought — so every price now lives on a
+ * `membershiptier`, and this module only ever quotes one.
  *
  * Nothing here decides entitlement on its own — checkout hands the viewer to Stripe
  * and `syncSubscription` writes the result, so a viewer who closes the tab
@@ -33,11 +38,10 @@ const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id')
 
 const channelIdSchema = z.object({ creatorId: objectId })
 /**
- * Which rung of the channel's ladder to buy. Omitted (or null) means the
- * channel-level subscription priced on the creator's own row — still the only thing
- * on offer from a creator who has not built a ladder.
+ * Which rung of the channel's ladder to buy. Required: a tier is the only thing a
+ * channel sells, so there is no longer an "unspecified" purchase to fall back to.
  */
-const checkoutSchema = z.object({ creatorId: objectId, tierId: objectId.nullish() })
+const checkoutSchema = z.object({ creatorId: objectId, tierId: objectId })
 const confirmSchema = z.object({ creatorId: objectId, sessionId: z.string().min(1).max(200) })
 
 function channelPath(creatorId: string): string {
@@ -64,8 +68,7 @@ export type ChannelView = {
   creatorId: string
   name: string
   description: string
-  /** Minor units (cents). Zero means the channel takes no subscribers. */
-  priceCents: number
+  /** The currency every tier on this channel is priced in. */
   currency: string
   /** True when the viewer has an active subscription, or is the creator. */
   subscribed: boolean
@@ -77,12 +80,11 @@ export type ChannelView = {
   /** The viewer owns this channel, so there is nothing to sell them. */
   isOwner: boolean
   /**
-   * The channel's membership ladder, lowest rung first. Empty for a creator who
-   * sells one flat subscription (or nothing), which is what every channel was
-   * before tiers.
+   * The channel's membership ladder, lowest rung first. Empty means the channel is
+   * not selling anything yet — it is the only thing a channel can sell.
    */
   tiers: Array<MembershipTierView>
-  /** The rung this viewer is on, or null for a channel-level or absent subscription. */
+  /** The rung this viewer is on. Null when they are not subscribed, or on a pre-tiers row. */
   viewerTierId: string | null
   /** Its name as it read at checkout, for the "Subscribed" line. */
   viewerTierName: string
@@ -103,7 +105,7 @@ export const getChannel = createServerFn({ method: 'GET' })
     await connectToDatabase()
 
     const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName channelDescription subscriptionPriceCents channelCurrency')
+      .select('name channelName channelDescription channelCurrency')
       .lean()
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
@@ -151,7 +153,6 @@ export const getChannel = createServerFn({ method: 'GET' })
       creatorId: String(creator._id),
       name: creator.channelName || creator.name || 'Untitled channel',
       description: creator.channelDescription ?? '',
-      priceCents: creator.subscriptionPriceCents ?? 0,
       currency: creator.channelCurrency || 'usd',
       subscribed,
       status: sub?.status ?? 'none',
@@ -197,35 +198,25 @@ export const getChannel = createServerFn({ method: 'GET' })
 const channelSettingsSchema = z.object({
   channelName: z.string().trim().max(80),
   channelDescription: z.string().trim().max(500),
-  /**
-   * Minor units. Capped rather than open-ended so a fat-fingered price cannot bill a
-   * subscriber hundreds of dollars, and floored at Stripe's minimum chargeable
-   * amount — below that Checkout rejects the session with an error the viewer, not
-   * the creator, would be the one to see.
-   */
-  subscriptionPriceCents: z.union([
-    z.literal(0),
-    z.number().int().min(50).max(500_000),
-  ]),
 })
 
 /**
- * Update the signed-in viewer's own channel. There is no `creatorId` argument on
- * purpose: identity comes from the session, so this can only ever edit your own
- * channel and no ownership check is needed.
+ * Update the signed-in viewer's own channel profile. There is no `creatorId`
+ * argument on purpose: identity comes from the session, so this can only ever edit
+ * your own channel and no ownership check is needed.
  *
- * Changing the price does not touch anyone's existing subscription — Stripe keeps
- * billing each subscriber the amount they agreed to, and `channelsubscription`
- * snapshots it — so a raise applies to new subscribers only.
+ * Deliberately carries no price. Pricing is what a membership tier is for, and a
+ * second place to set one is how a channel ends up quoting two different figures
+ * for the same access — see `createMembershipTier`.
  */
 export const updateChannelSettings = createServerFn({ method: 'POST' })
   .validator(channelSettingsSchema)
-  .handler(async ({ data }): Promise<{ priceCents: number }> => {
+  .handler(async ({ data }): Promise<{ ok: true }> => {
     const userId = await requireUserId()
     await connectToDatabase()
 
     await UserModel.updateOne({ _id: userId }, { $set: data })
-    return { priceCents: data.subscriptionPriceCents }
+    return { ok: true }
   })
 
 /**
@@ -262,11 +253,10 @@ async function ensureCustomerId(userId: string): Promise<string> {
  * Start a hosted Checkout for one of this channel's monthly subscriptions and return
  * the URL to send the browser to. The client redirects; nothing is charged here.
  *
- * `tierId` picks a rung of the creator's membership ladder; without it the viewer
- * buys the flat channel subscription priced on the creator's own row. Either way the
- * recurring price is built inline rather than referencing a Price object, so a
- * creator can name their own fees — one, or one per tier — without anyone touching
- * the Stripe dashboard.
+ * `tierId` picks a rung of the creator's membership ladder, which is the only thing
+ * a channel sells. The recurring price is built inline from that tier rather than
+ * referencing a Price object, so a creator can name their own fees without anyone
+ * touching the Stripe dashboard.
  *
  * There is deliberately no upgrade path here: a viewer who is already entitled is
  * turned away rather than sold a second subscription, because the unique
@@ -283,24 +273,21 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
     if (subscriberId === data.creatorId) throw new Error(CHANNEL_ERRORS.cannotSubscribeToSelf)
 
     const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName subscriptionPriceCents channelCurrency')
+      .select('name channelName channelCurrency')
       .lean()
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
     // The tier must belong to *this* creator and still be on sale. Otherwise a
     // hand-edited request could buy a cheap tier from one channel and have it
     // recorded against another, which the gate would then honour.
-    const tier = data.tierId
-      ? await MembershipTierModel.findOne({
-          _id: data.tierId,
-          creatorId: creator._id,
-          active: true,
-        }).lean()
-      : null
-    if (data.tierId && !tier) throw new Error(CHANNEL_ERRORS.tierNotFound)
+    const tier = await MembershipTierModel.findOne({
+      _id: data.tierId,
+      creatorId: creator._id,
+      active: true,
+    }).lean()
+    if (!tier) throw new Error(CHANNEL_ERRORS.tierNotFound)
 
-    const priceCents = tier ? tier.priceCents : (creator.subscriptionPriceCents ?? 0)
-    if (priceCents <= 0) throw new Error(CHANNEL_ERRORS.notAcceptingSubscribers)
+    const priceCents = tier.priceCents
 
     const existing = await ChannelSubscriptionModel.findOne({
       subscriberId,
@@ -309,29 +296,23 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
     // Stripe would happily create a second, separately billed subscription.
     if (isEntitled(existing ?? null)) throw new Error(CHANNEL_ERRORS.alreadySubscribed)
 
-    const currency = (tier ? tier.currency : creator.channelCurrency) || 'usd'
+    const currency = tier.currency || creator.channelCurrency || 'usd'
     const customerId = await ensureCustomerId(subscriberId)
     const channelName = creator.channelName || creator.name || 'Channel'
     const creatorId = String(creator._id)
-    const tierId = tier ? String(tier._id) : ''
-    const tierName = tier ? tier.name : ''
+    const tierId = String(tier._id)
+    const tierName = tier.name
 
     // Written before the handoff so the channel page can say "payment pending"
     // rather than nothing if the viewer comes back before Stripe does. Upsert,
     // because a previous lapsed subscription to the same channel leaves a row.
     //
-    // The tier is written here as well as in `syncSubscription`, and is explicitly
-    // cleared for a channel-level purchase: a lapsed row left over from an earlier
-    // tier would otherwise go on naming that tier while the new payment settles.
+    // The tier is written here as well as in `syncSubscription`, and overwrites
+    // whatever the row named before: a lapsed row left over from an earlier tier
+    // would otherwise go on naming that one while the new payment settles.
     await ChannelSubscriptionModel.findOneAndUpdate(
       { subscriberId, creatorId: creator._id },
-      {
-        stripeCustomerId: customerId,
-        priceCents,
-        currency,
-        tierId: tier?._id ?? null,
-        tierName,
-      },
+      { stripeCustomerId: customerId, priceCents, currency, tierId: tier._id, tierName },
       { upsert: true, setDefaultsOnInsert: true },
     )
 
@@ -346,11 +327,7 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
             currency,
             unit_amount: priceCents,
             recurring: { interval: 'month' },
-            product_data: {
-              name: tier
-                ? `${channelName} — ${tier.name}`
-                : `${channelName} — channel subscription`,
-            },
+            product_data: { name: `${channelName} — ${tier.name}` },
           },
         },
       ],

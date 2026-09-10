@@ -18,6 +18,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { connectToDatabase } from '../src/server/db/mongoose.ts'
+import { MembershipTierModel } from '../src/server/db/models/membership-tier.ts'
 import { UserModel } from '../src/server/db/models/user.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
 import { AdModel } from '../src/server/db/models/ad.ts'
@@ -46,7 +47,12 @@ async function upload(prefix: string, file: string): Promise<string> {
 }
 
 /**
- * The demo channel every seeded video belongs to, created on first run.
+ * The demo channel every seeded video belongs to, plus the membership tier that
+ * sells access to its subscriber-only videos. Created on first run.
+ *
+ * A channel sells tiers and nothing else, so seeding a price means seeding a tier —
+ * without one the seeded subscriber-only videos would be visible to nobody but the
+ * demo creator, and the checkout flow would have nothing to demonstrate.
  *
  * `googleId` is set to a sentinel so the schema's conditional `passwordHash`
  * requirement does not fire: this account owns videos and is never signed into.
@@ -55,6 +61,7 @@ async function ensureCreator() {
   const email = process.env.SEED_CREATOR_EMAIL ?? 'creator@g-hub.local'
   const name = process.env.SEED_CREATOR_NAME ?? 'Demo Channel'
   const priceCents = Number(process.env.SEED_CHANNEL_PRICE_CENTS ?? 499)
+  const tierName = process.env.SEED_TIER_NAME ?? 'Membership'
 
   const creator = await UserModel.findOneAndUpdate(
     { email },
@@ -64,13 +71,22 @@ async function ensureCreator() {
       googleId: `seed:${email}`,
       channelName: name,
       channelDescription: 'Seeded demo channel for the subscription flow.',
-      subscriptionPriceCents: priceCents,
       channelCurrency: 'usd',
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   )
 
-  console.log(`channel ready: ${name} (${creator._id}) at ${priceCents} cents/month`)
+  // Keyed on (creator, name) so re-seeding reprices the same tier rather than
+  // stacking up duplicates, which the partial unique index would reject anyway.
+  const tier = await MembershipTierModel.findOneAndUpdate(
+    { creatorId: creator._id, name: tierName },
+    { creatorId: creator._id, name: tierName, priceCents, currency: 'usd', rank: 0, active: true },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  )
+
+  console.log(
+    `channel ready: ${name} (${creator._id}) — tier "${tier.name}" at ${priceCents} cents/month`,
+  )
   return creator
 }
 

@@ -6,7 +6,7 @@
  */
 export const CHANNEL_ERRORS = {
   channelNotFound: 'That channel does not exist.',
-  notAcceptingSubscribers: 'This channel is not accepting subscribers yet.',
+  notAcceptingSubscribers: 'This channel has no membership tiers yet.',
   alreadySubscribed: 'You are already subscribed to this channel.',
   cannotSubscribeToSelf: 'This is your own channel.',
   noSubscription: 'You do not have a subscription to manage yet.',

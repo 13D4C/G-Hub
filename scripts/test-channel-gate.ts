@@ -43,7 +43,6 @@ async function main() {
     googleId: `${tag}-creator`,
     name: 'Gate Test Creator',
     channelName: 'Gate Test Channel',
-    subscriptionPriceCents: 499,
   })
   const viewer = await UserModel.create({
     email: `${tag}-viewer@example.test`,
@@ -130,7 +129,6 @@ async function main() {
     email: `${tag}-other@example.test`,
     googleId: `${tag}-other`,
     channelName: 'Someone Else',
-    subscriptionPriceCents: 999,
   })
   const otherPremium = await VideoModel.create({
     title: `${tag} other premium`,
