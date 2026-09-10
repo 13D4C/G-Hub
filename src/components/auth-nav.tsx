@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
-import { LogOut } from 'lucide-react'
+import { CreditCard, LogOut } from 'lucide-react'
 import { meQueryOptions } from '@/lib/auth'
+import { billingStatusQueryOptions } from '@/lib/billing'
 import { logout } from '@/server/functions/auth'
 
 const FALLBACK_AVATAR = '/assets/skibidi.jpg'
@@ -22,6 +23,8 @@ export function AuthNav() {
     onSuccess: async () => {
       setOpen(false)
       await queryClient.invalidateQueries({ queryKey: meQueryOptions.queryKey })
+      // Plan status is per-viewer, so it must not survive a sign-out.
+      await queryClient.invalidateQueries({ queryKey: billingStatusQueryOptions.queryKey })
       await router.navigate({ to: '/' })
     },
   })
@@ -72,6 +75,15 @@ export function AuthNav() {
         >
           <p className="truncate px-2 py-1.5 text-sm font-medium">{user.name || user.email}</p>
           <div className="-mx-1 my-1 h-px bg-border" />
+          <Link
+            to="/billing"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent"
+          >
+            <CreditCard className="size-4" />
+            Billing
+          </Link>
           <button
             type="button"
             role="menuitem"
