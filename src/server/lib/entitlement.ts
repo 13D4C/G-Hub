@@ -6,23 +6,63 @@ import type { Types } from 'mongoose'
 // them back to `@/` breaks that check.
 import { INTERACTION_ERRORS } from '../../lib/interaction-errors.ts'
 import { ChannelSubscriptionModel } from '../db/models/channel-subscription.ts'
+import { MembershipTierModel } from '../db/models/membership-tier.ts'
 import { VideoModel } from '../db/models/video.ts'
 import { isEntitled } from './entitlement-status.ts'
+import { tierUnlocks, type TierRef } from './tier-access.ts'
 
 /**
  * Who is allowed to watch what. Every playback and interaction handler routes through
- * `requirePlayableVideo`, so the rule "public is open, premium needs a subscription to
- * that channel" exists in exactly one place — a second copy is how a subscriber ends
- * up able to watch a video but not like it.
+ * `requirePlayableVideo`, so the rules — public is open, premium needs a subscription
+ * to that channel, and a tier-gated video needs that tier or better — exist in exactly
+ * one place. A second copy is how a subscriber ends up able to watch a video but not
+ * like it.
  */
 
-// One import site for callers that only need the predicate.
-export { isEntitled }
+// One import site for callers that only need the predicates.
+export { isEntitled, tierUnlocks }
 
 /**
- * Whether this viewer currently subscribes to this channel. Anonymous viewers never
- * do, and answering that costs no query. A creator is always entitled to their own
- * channel, so nobody has to pay to watch their own upload.
+ * What one viewer may do on one channel: whether they are paying at all, and which
+ * rung of the ladder they are paying for.
+ */
+export type ChannelAccess = {
+  /** An active subscription, or the creator's own channel. */
+  subscribed: boolean
+  /** The tier held, or null for a channel-level subscription and for non-subscribers. */
+  tierId: string | null
+  /** The creator, who never pays for their own channel and holds every tier by right. */
+  isOwner: boolean
+}
+
+const NO_ACCESS: ChannelAccess = { subscribed: false, tierId: null, isOwner: false }
+
+/**
+ * This viewer's standing on this channel. Anonymous viewers have none, and answering
+ * that costs no query.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function getChannelAccess(
+  viewerId: string | null,
+  creatorId: string | Types.ObjectId | null | undefined,
+): Promise<ChannelAccess> {
+  if (!viewerId || !creatorId) return NO_ACCESS
+  if (viewerId === String(creatorId)) return { subscribed: true, tierId: null, isOwner: true }
+
+  const sub = await ChannelSubscriptionModel.findOne({ subscriberId: viewerId, creatorId })
+    .select('status currentPeriodEnd tierId')
+    .lean()
+  if (!isEntitled(sub ?? null)) return NO_ACCESS
+
+  return { subscribed: true, tierId: sub?.tierId ? String(sub.tierId) : null, isOwner: false }
+}
+
+/**
+ * Whether this viewer currently subscribes to this channel, ignoring which tier.
+ *
+ * Kept for callers that only sell one thing — the channel page's "Subscribed" badge,
+ * and the ad decision, since a subscriber of any tier has paid to skip the preroll.
  *
  * Assumes the caller has already connected to the database.
  */
@@ -30,23 +70,70 @@ export async function hasActiveChannelSubscription(
   viewerId: string | null,
   creatorId: string | Types.ObjectId | null | undefined,
 ): Promise<boolean> {
-  if (!viewerId || !creatorId) return false
-  if (viewerId === String(creatorId)) return true
-
-  const sub = await ChannelSubscriptionModel.findOne({ subscriberId: viewerId, creatorId })
-    .select('status currentPeriodEnd')
-    .lean()
-  return isEntitled(sub ?? null)
+  return (await getChannelAccess(viewerId, creatorId)).subscribed
 }
 
 /**
- * The video, if this viewer may watch it, plus whether they subscribe to its channel
- * — the caller needs the second answer to render the paywall and would otherwise
- * re-query.
+ * Ranks for a set of tier ids, in one query.
  *
- * A missing video and a locked one give different messages on purpose: a premium
- * video is a paywalled one, not a hidden one, and telling the viewer to subscribe is
- * the entire point of the paywall.
+ * Archived tiers are included on purpose: a subscriber keeps the rung they bought
+ * after the creator retires it, and a video keeps the gate it was given. Only a
+ * genuinely deleted tier is missing from the result, and `tierUnlocks` fails closed
+ * on that.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function loadTierRanks(
+  ids: Array<string | Types.ObjectId | null | undefined>,
+): Promise<Map<string, number>> {
+  const wanted = [...new Set(ids.filter(Boolean).map(String))]
+  if (wanted.length === 0) return new Map()
+
+  const tiers = await MembershipTierModel.find({ _id: { $in: wanted } })
+    .select('rank')
+    .lean()
+  return new Map(tiers.map((t) => [String(t._id), t.rank]))
+}
+
+/** A tier id paired with the rank a `loadTierRanks` map holds for it. */
+export function tierRefOf(
+  tierId: string | Types.ObjectId | null | undefined,
+  ranks: Map<string, number>,
+): TierRef | null {
+  if (!tierId) return null
+  const id = String(tierId)
+  return { id, rank: ranks.get(id) ?? null }
+}
+
+/**
+ * Whether this standing on the channel opens a video gated behind `requiredTierId`.
+ *
+ * Pass `ranks` when the caller has already batched the lookup for a page of videos;
+ * without it this resolves the two tiers itself.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function unlocksTier(
+  access: ChannelAccess,
+  requiredTierId: string | Types.ObjectId | null | undefined,
+  ranks?: Map<string, number>,
+): Promise<boolean> {
+  // The creator holds every rung of their own ladder without buying one.
+  if (access.isOwner) return true
+  if (!requiredTierId) return true
+
+  const resolved = ranks ?? (await loadTierRanks([access.tierId, requiredTierId]))
+  return tierUnlocks(tierRefOf(access.tierId, resolved), tierRefOf(requiredTierId, resolved))
+}
+
+/**
+ * The video, if this viewer may watch it, plus their standing on its channel — the
+ * caller needs the second answer to render the paywall and would otherwise re-query.
+ *
+ * A missing video, a video behind a paywall, and a video behind a *higher* tier give
+ * three different messages on purpose. A premium video is a paywalled one, not a
+ * hidden one; and telling a paying Silver subscriber to "subscribe" when they already
+ * have would read as a bug rather than as an upsell.
  *
  * Assumes the caller has already connected to the database.
  */
@@ -56,10 +143,14 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
 
   // Computed even for a public video: one indexed lookup, and a `subscribed` flag
   // that is only true when the paywall forced it would be a lie the UI reads.
-  const subscribed = await hasActiveChannelSubscription(viewerId, video.uploadedBy)
-  if (video.visibility !== 'public' && !subscribed) {
-    throw new Error(INTERACTION_ERRORS.subscriptionRequired)
+  const access = await getChannelAccess(viewerId, video.uploadedBy)
+
+  if (video.visibility !== 'public') {
+    if (!access.subscribed) throw new Error(INTERACTION_ERRORS.subscriptionRequired)
+    if (!(await unlocksTier(access, video.requiredTierId))) {
+      throw new Error(INTERACTION_ERRORS.tierRequired)
+    }
   }
 
-  return { video, subscribed }
+  return { video, ...access }
 }

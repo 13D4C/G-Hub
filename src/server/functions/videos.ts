@@ -1,14 +1,22 @@
 import { createServerFn } from '@tanstack/react-start'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
+import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
+import { MembershipTierModel } from '@/server/db/models/membership-tier'
 import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import { uploadObject } from '@/server/storage/seaweed'
-import { hasActiveChannelSubscription, requirePlayableVideo } from '@/server/lib/entitlement'
+import {
+  getChannelAccess,
+  loadTierRanks,
+  requirePlayableVideo,
+  tierRefOf,
+  tierUnlocks,
+} from '@/server/lib/entitlement'
 
 /**
  * Server functions only ever run on the server, so `mongoose` never reaches the
@@ -41,6 +49,22 @@ async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
 }
 
 /**
+ * A gated video's tier name, for the copy that tells a viewer what would open it.
+ *
+ * Archived tiers are looked up too — a gate outlives the tier leaving the shop
+ * window, and an unexplained lock is worse than one that names a tier no longer
+ * sold.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+async function tierNameOf(requiredTierId: unknown): Promise<string> {
+  if (!requiredTierId) return ''
+
+  const tier = await MembershipTierModel.findById(requiredTierId).select('name').lean()
+  return tier?.name ?? ''
+}
+
+/**
  * The browsable catalogue, seen through this viewer's entitlement.
  *
  * Premium videos are listed alongside public ones — that is the point of a paywall:
@@ -68,7 +92,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
   const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 
   // Asked once per *channel* that actually sells something on this page, not once
-  // per row, and through the shared predicate so the rule (a creator is entitled to
+  // per row, and through the shared helper so the rule (a creator is entitled to
   // their own channel) is not restated here.
   const premiumCreators = [
     ...new Set(
@@ -77,15 +101,30 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
         .map((v) => String(v.uploadedBy)),
     ),
   ]
-  const entitlements = await Promise.all(
-    premiumCreators.map(async (id) => [id, await hasActiveChannelSubscription(viewerId, id)] as const),
+  const accessEntries = await Promise.all(
+    premiumCreators.map(async (id) => [id, await getChannelAccess(viewerId, id)] as const),
   )
-  const entitledTo = new Map(entitlements)
+  const accessTo = new Map(accessEntries)
+
+  // Every tier this page has to compare — the ones the viewer holds and the ones the
+  // rows demand — resolved in one query rather than two per premium row.
+  const ranks = await loadTierRanks([
+    ...accessEntries.map(([, access]) => access.tierId),
+    ...videos.map((v) => v.requiredTierId),
+  ])
 
   return videos.map((v) => {
     const creatorId = v.uploadedBy ? String(v.uploadedBy) : null
     const premium = v.visibility !== 'public'
-    const unlocked = !premium || (!!creatorId && entitledTo.get(creatorId) === true)
+    const access = creatorId ? accessTo.get(creatorId) : undefined
+    // Subscribed at all, and then high enough on the ladder — the same two-part rule
+    // `requirePlayableVideo` applies when the viewer actually presses play.
+    const unlocked =
+      !premium ||
+      (!!access &&
+        access.subscribed &&
+        (access.isOwner ||
+          tierUnlocks(tierRefOf(access.tierId, ranks), tierRefOf(v.requiredTierId, ranks))))
 
     return {
       id: String(v._id),
@@ -116,6 +155,8 @@ export type PlaybackData = {
   /** True when the viewer subscribes to this video's channel (or owns it). */
   subscribed: boolean
   premium: boolean
+  /** The tier that gates this video, empty when any subscriber may watch it. */
+  requiredTierName: string
   preroll: PrerollAd | null
 }
 
@@ -123,10 +164,11 @@ export type PlaybackData = {
  * Return a video for playback plus a preroll ad to show before it.
  *
  * Public videos are open to everyone; premium ones (`visibility: 'private'`) require
- * an active subscription to the video's channel, and `requirePlayableVideo` throws
- * `subscriptionRequired` otherwise — the message the `/video` route turns into a
- * subscribe prompt. A subscriber watches that channel ad-free, which is the other
- * half of what they paid for.
+ * an active subscription to the video's channel, and one gated behind a membership
+ * tier requires that tier or higher. `requirePlayableVideo` throws
+ * `subscriptionRequired` or `tierRequired` otherwise — the two messages the `/video`
+ * route turns into a subscribe prompt and an upgrade prompt. A subscriber of any
+ * tier watches that channel ad-free, which is the other half of what they paid for.
  */
 export const getVideoById = createServerFn({ method: 'GET' })
   .validator(getVideoByIdSchema)
@@ -149,6 +191,7 @@ export const getVideoById = createServerFn({ method: 'GET' })
       channel: await channelOf(video.uploadedBy),
       subscribed,
       premium: video.visibility !== 'public',
+      requiredTierName: await tierNameOf(video.requiredTierId),
       preroll,
     }
   })
@@ -160,6 +203,8 @@ export type LockedVideo = {
   title: string
   description: string
   channel: VideoChannel | null
+  /** The tier that would open it, empty when a plain subscription suffices. */
+  requiredTierName: string
 }
 
 /**
@@ -175,7 +220,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
     await connectToDatabase()
 
     const video = await VideoModel.findById(data.videoId)
-      .select('title description uploadedBy')
+      .select('title description uploadedBy requiredTierId')
       .lean()
     if (!video) return null
 
@@ -184,6 +229,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
       title: video.title,
       description: video.description,
       channel: await channelOf(video.uploadedBy),
+      requiredTierName: await tierNameOf(video.requiredTierId),
     }
   })
 
@@ -194,6 +240,8 @@ export type MyVideo = {
   url: string
   durationSeconds: number
   visibility: 'public' | 'private'
+  /** The tier gating it, or null for "any active subscriber". */
+  requiredTierId: string | null
   likeCount: number
   shareCount: number
   createdAt: string
@@ -216,6 +264,7 @@ export const listMyVideos = createServerFn({ method: 'GET' }).handler(
       url: v.url,
       durationSeconds: v.durationSeconds,
       visibility: v.visibility,
+      requiredTierId: v.requiredTierId ? String(v.requiredTierId) : null,
       likeCount: v.likeCount ?? 0,
       shareCount: v.shareCount ?? 0,
       createdAt: v.createdAt.toISOString(),
@@ -235,6 +284,10 @@ export const createVideo = createServerFn({ method: 'POST' })
     const title = String(data.get('title') ?? '').trim()
     const description = String(data.get('description') ?? '').trim()
     const visibility = data.get('visibility') === 'private' ? 'private' : 'public'
+    // Only meaningful on a premium upload; a tier sent alongside "public" is dropped
+    // rather than honoured, so the two controls cannot disagree in the database.
+    const requestedTierId =
+      visibility === 'private' ? String(data.get('requiredTierId') ?? '').trim() : ''
 
     if (!(file instanceof File) || !file.type.startsWith('video/')) {
       throw new Error(VIDEO_ERRORS.invalidFile)
@@ -245,6 +298,22 @@ export const createVideo = createServerFn({ method: 'POST' })
 
     await connectToDatabase()
 
+    // Checked before the upload, not after: a rejected gate should not leave an
+    // orphaned object in SeaweedFS. Must be the uploader's own live tier, or a
+    // hand-built form could gate a video behind another creator's ladder.
+    const requiredTierId = requestedTierId
+      ? ((
+          await MembershipTierModel.findOne({
+            _id: requestedTierId,
+            creatorId: userId,
+            active: true,
+          })
+            .select('_id')
+            .lean()
+        )?._id ?? null)
+      : null
+    if (requestedTierId && !requiredTierId) throw new Error(CHANNEL_ERRORS.tierNotYours)
+
     const body = new Uint8Array(await file.arrayBuffer())
     const key = `videos/${randomUUID()}-${file.name}`
     const url = await uploadObject({ key, body, contentType: file.type })
@@ -254,6 +323,7 @@ export const createVideo = createServerFn({ method: 'POST' })
       description,
       url,
       visibility,
+      requiredTierId,
       uploadedBy: userId,
       // A premium video is the subscription's product; running an ad in front of it
       // as well would be selling the same minute twice.

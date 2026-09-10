@@ -43,10 +43,14 @@ function customerIdOf(subscription: Stripe.Subscription): string {
  * customer across every channel they subscribe to. A subscription without that
  * metadata belongs to some other integration sharing the test account and is
  * ignored rather than guessed at.
+ *
+ * That same metadata carries the membership tier bought, so a subscription whose
+ * webhook lands before the viewer returns from Checkout — or instead of it — still
+ * records *which* rung was paid for and not merely that something was.
  */
 export async function syncSubscription(subscriptionId: string): Promise<void> {
   const subscription = await getStripe().subscriptions.retrieve(subscriptionId)
-  const { subscriberId, creatorId } = subscription.metadata ?? {}
+  const { subscriberId, creatorId, tierId, tierName } = subscription.metadata ?? {}
 
   if (!subscriberId || !creatorId) {
     console.warn(
@@ -65,6 +69,11 @@ export async function syncSubscription(subscriptionId: string): Promise<void> {
       status: subscription.status,
       currentPeriodEnd: currentPeriodEndOf(subscription),
       cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      // Empty for a channel-level subscription, which is what every subscription was
+      // before tiers existed. Stripe metadata values are strings, so `''` is how "no
+      // tier" arrives and null is how it has to be stored.
+      tierId: tierId || null,
+      tierName: tierName ?? '',
     },
     { upsert: true, returnDocument: 'after' },
   ).lean()

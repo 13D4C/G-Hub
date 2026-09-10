@@ -20,22 +20,43 @@ const videoSearchSchema = z.object({
 })
 
 /**
+ * The two rejections that mean "locked", not "broken": no subscription at all, and a
+ * subscription on too low a rung of the channel's membership ladder. Both are the
+ * *expected* path for a gated video, so both are caught below and turned into a
+ * prompt. Any other rejection (a missing video, a database outage) is left to
+ * propagate to the router's error boundary.
+ */
+const LOCKED_MESSAGES = new Set<string>([
+  INTERACTION_ERRORS.subscriptionRequired,
+  INTERACTION_ERRORS.tierRequired,
+])
+
+/**
  * Playback, or the paywall that stands in for it.
  *
- * `getVideoById` rejects a premium video the viewer has not paid for, and that
- * rejection is the *expected* path for a locked video rather than an error — so it
- * is caught here and turned into a subscribe prompt. Any other rejection (a missing
- * video, a database outage) is left to propagate to the router's error boundary.
+ * Which of the two rejections came back is carried through as `needsUpgrade`: a
+ * viewer already paying for Silver has to be told to upgrade, and showing them
+ * "Subscribe to this channel" when they already have would read as a bug.
  */
-async function loadPlayback(
-  videoId: string,
-): Promise<{ playback: PlaybackData | null; locked: LockedVideo | null }> {
+async function loadPlayback(videoId: string): Promise<{
+  playback: PlaybackData | null
+  locked: LockedVideo | null
+  needsUpgrade: boolean
+}> {
   try {
-    return { playback: await getVideoById({ data: { videoId } }), locked: null }
+    return {
+      playback: await getVideoById({ data: { videoId } }),
+      locked: null,
+      needsUpgrade: false,
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message.trim() : ''
-    if (message !== INTERACTION_ERRORS.subscriptionRequired) throw error
-    return { playback: null, locked: await getLockedVideo({ data: { videoId } }) }
+    if (!LOCKED_MESSAGES.has(message)) throw error
+    return {
+      playback: null,
+      locked: await getLockedVideo({ data: { videoId } }),
+      needsUpgrade: message === INTERACTION_ERRORS.tierRequired,
+    }
   }
 }
 
@@ -44,9 +65,9 @@ export const Route = createFileRoute('/video')({
   loaderDeps: ({ search }) => ({ id: search.id }),
   loader: async ({ deps, context }) => {
     const videos = await listVideos()
-    const { playback, locked } = deps.id
+    const { playback, locked, needsUpgrade } = deps.id
       ? await loadPlayback(deps.id)
-      : { playback: null, locked: null }
+      : { playback: null, locked: null, needsUpgrade: false }
 
     // Only warm the interaction caches for a video the viewer can actually watch —
     // the interaction handlers apply the same paywall and would reject in the loader.
@@ -63,13 +84,13 @@ export const Route = createFileRoute('/video')({
       ])
     }
 
-    return { videos, playback, locked }
+    return { videos, playback, locked, needsUpgrade }
   },
   component: VideoPage,
 })
 
 function VideoPage() {
-  const { videos, playback, locked } = Route.useLoaderData()
+  const { videos, playback, locked, needsUpgrade } = Route.useLoaderData()
   const currentId = playback?.video.id ?? locked?.id
   const moreVideos = videos.filter((video) => video.id !== currentId)
 
@@ -108,7 +129,7 @@ function VideoPage() {
             </div>
           </>
         ) : locked ? (
-          <Paywall locked={locked} />
+          <Paywall locked={locked} needsUpgrade={needsUpgrade} />
         ) : (
           <EmptyState icon={Droplets} message="Pick a video from the list to start watching" />
         )}
@@ -145,27 +166,39 @@ function ChannelByline({ channel }: { channel: VideoChannel }) {
 }
 
 /**
- * What a viewer sees instead of the player when they have not paid for a premium
- * video. The call to action is the channel, not a generic "upgrade": this paywall is
- * one creator's, and the price lives on their page.
+ * What a viewer sees instead of the player when they cannot watch a premium video.
+ *
+ * The call to action is always the channel — this paywall is one creator's, and the
+ * prices live on their page — but the wording splits on `needsUpgrade`. Telling a
+ * paying Silver subscriber to "subscribe" would read as a bug, and telling a
+ * stranger to "upgrade" names a thing they do not have.
  */
-function Paywall({ locked }: { locked: LockedVideo }) {
+function Paywall({ locked, needsUpgrade }: { locked: LockedVideo; needsUpgrade: boolean }) {
+  const tier = locked.requiredTierName
+
+  const heading = needsUpgrade ? `${tier || 'Higher tier'} video` : 'Premium video'
+  const explanation = !locked.channel
+    ? 'This video is not available.'
+    : needsUpgrade
+      ? tier
+        ? `Your membership does not include this. It needs the ${tier} tier on ${locked.channel.name}.`
+        : `Your membership tier does not include this video.`
+      : tier
+        ? `Subscribe to ${locked.channel.name} at ${tier} or higher to watch this.`
+        : `Subscribe to ${locked.channel.name} to watch this.`
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex aspect-video flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-white/20 bg-black/40 p-8 text-center">
         <Lock className="size-10 text-white/80" aria-hidden />
         <div className="flex flex-col gap-1">
-          <p className="font-display text-lg font-semibold text-white">Premium video</p>
-          <p className="text-sm text-slate-300">
-            {locked.channel
-              ? `Subscribe to ${locked.channel.name} to watch this.`
-              : 'This video is not available.'}
-          </p>
+          <p className="font-display text-lg font-semibold text-white">{heading}</p>
+          <p className="text-sm text-slate-300">{explanation}</p>
         </div>
         {locked.channel ? (
           <Button asChild className="rounded-full">
             <Link to="/channel" search={{ id: locked.channel.creatorId }}>
-              View subscription options
+              {needsUpgrade ? 'View membership tiers' : 'View subscription options'}
             </Link>
           </Button>
         ) : null}
