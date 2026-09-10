@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Heart, MessageSquare, Share2 } from 'lucide-react'
 import { SignInPrompt } from '@/components/sign-in-prompt'
+import { TipButton } from '@/components/tip-button'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { describeMutationError, meQueryOptions } from '@/lib/auth'
@@ -9,9 +10,17 @@ import { copyToClipboard } from '@/lib/clipboard'
 import { interactionKeys, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { recordShare, toggleVideoLike } from '@/server/functions/interactions'
 import type { InteractionSummary } from '@/server/functions/interactions'
+import type { VideoChannel } from '@/server/functions/videos'
 
-/** Like / comment-count / share row for the video currently playing. */
-export function VideoInteractionBar({ videoId }: { videoId: string }) {
+/** Like / comment-count / share / tip row for the video currently playing. */
+export function VideoInteractionBar({
+  videoId,
+  channel,
+}: {
+  videoId: string
+  /** Null for videos uploaded before channels existed — those have nobody to tip. */
+  channel: VideoChannel | null
+}) {
   const queryClient = useQueryClient()
   const { data: viewer } = useQuery(meQueryOptions)
   const viewerId = viewer?.id ?? null
@@ -81,7 +90,7 @@ export function VideoInteractionBar({ videoId }: { videoId: string }) {
             {count(summary?.likeCount)}
           </Button>
         ) : (
-          <SignInPrompt videoId={videoId} label="Sign in to like" />
+          <SignInPrompt redirect={`/video?id=${videoId}`} label="Sign in to like" />
         )}
 
         {/* A count, not a control — the comment thread is already below the player. */}
@@ -96,6 +105,16 @@ export function VideoInteractionBar({ videoId }: { videoId: string }) {
           Share
           <span className="text-muted-foreground">{count(summary?.shareCount)}</span>
         </Button>
+
+        {channel ? (
+          <TipButton
+            creatorId={channel.creatorId}
+            creatorName={channel.name}
+            currency={channel.currency}
+            videoId={videoId}
+            redirect={`/video?id=${videoId}`}
+          />
+        ) : null}
 
         {shareNotice ? (
           <span role="status" className="text-sm text-muted-foreground">
