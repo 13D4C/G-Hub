@@ -4,11 +4,13 @@ import { VideoComments } from '@/components/video-comments'
 import { VideoInteractionBar } from '@/components/video-interaction-bar'
 import { VideoPlayer } from '@/components/video-player'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { meQueryOptions } from '@/lib/auth'
+import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { formatDate } from '@/lib/utils'
 import { listVideos, getVideoById } from '@/server/functions/videos'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { CalendarDays, Droplets } from 'lucide-react'
 import { z } from 'zod'
 
@@ -21,9 +23,26 @@ export const Route = createFileRoute('/video')({
   loaderDeps: ({ search }) => ({ id: search.id }),
   loader: async ({ deps, context }) => {
     const videos = await listVideos()
-    const playback = deps.id ? await getVideoById({ data: { videoId: deps.id } }) : null
-
+    let playback = null
+    let paywalled = false
     if (deps.id) {
+      try {
+        playback = await getVideoById({ data: { videoId: deps.id } })
+      } catch (err) {
+        // The paywall is a page state, not a failure: it renders a subscribe CTA
+        // below. Everything else (missing video, database down) still throws through
+        // to the router's error boundary.
+        if (
+          !(err instanceof Error) ||
+          err.message !== INTERACTION_ERRORS.subscriptionRequired
+        ) {
+          throw err
+        }
+        paywalled = true
+      }
+    }
+
+    if (deps.id && playback) {
       // Warm the interaction caches so the counts and comments are server-rendered
       // (a non-suspense `useQuery` does not fetch during SSR). They are deliberately
       // NOT returned as loader data: that would force interaction mutations to
@@ -38,13 +57,13 @@ export const Route = createFileRoute('/video')({
       ])
     }
 
-    return { videos, playback }
+    return { videos, playback, paywalled }
   },
   component: VideoPage,
 })
 
 function VideoPage() {
-  const { videos, playback } = Route.useLoaderData()
+  const { videos, playback, paywalled } = Route.useLoaderData()
   const currentId = playback?.video.id
   const moreVideos = videos.filter((video) => video.id !== currentId)
 
@@ -78,6 +97,16 @@ function VideoPage() {
               </Card>
             </div>
           </>
+        ) : paywalled ? (
+          <Card className="flex flex-col items-start gap-3 p-5">
+            <h1 className="font-display text-xl font-semibold text-slate-900">Subscribers only</h1>
+            <p className="text-sm text-slate-700">
+              {INTERACTION_ERRORS.subscriptionRequired} Subscribers also watch without ads.
+            </p>
+            <Button asChild>
+              <Link to="/billing">Go ad-free</Link>
+            </Button>
+          </Card>
         ) : (
           <EmptyState icon={Droplets} message="Pick a video from the list to start watching" />
         )}

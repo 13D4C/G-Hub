@@ -6,7 +6,9 @@
  */
 export const INTERACTION_ERRORS = {
   videoNotFound: 'Video not found',
-  videoNotPublic: 'This video is not public',
+  // A private video is paywalled, not hidden: the point of the message is to tell the
+  // viewer what to do about it. See `src/server/lib/entitlement.ts`.
+  subscriptionRequired: 'This video requires an active subscription.',
   // Deliberately does not distinguish "gone" from "not yours" — never leak whether
   // another viewer's comment exists.
   commentNotFound: 'That comment no longer exists.',
