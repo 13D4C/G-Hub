@@ -1,8 +1,9 @@
 import Stripe from 'stripe'
 import { getRequest } from '@tanstack/react-start/server'
+import { UserModel } from '@/server/db/models/user'
 
 /**
- * Stripe wiring for channel subscriptions. Mirrors `src/server/auth/google.ts`: the
+ * Stripe wiring for channel subscriptions and tips. Mirrors `src/server/auth/google.ts`: the
  * environment is read lazily inside getters, so an app running without billing
  * configured still boots and only the billing paths fail.
  *
@@ -55,4 +56,34 @@ export function getWebhookSecret(): string {
  */
 export function getAppUrl(): string {
   return process.env.APP_URL ?? new URL(getRequest().url).origin
+}
+
+/**
+ * The viewer's Stripe customer id, creating the customer on first use and caching it
+ * on the account. One customer per viewer, reused across every channel they
+ * subscribe to and every tip they send.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function ensureCustomerId(userId: string): Promise<string> {
+  const user = await UserModel.findById(userId).select('email name stripeCustomerId').lean()
+  if (user?.stripeCustomerId) return user.stripeCustomerId
+
+  const customer = await getStripe().customers.create({
+    email: user?.email,
+    name: user?.name || undefined,
+    // Lets a human trace a customer back to an account in the Stripe dashboard.
+    metadata: { userId },
+  })
+
+  // Conditional on the field still being empty, so a concurrent double submit keeps
+  // whichever id landed first and leaves this one orphaned in the test account,
+  // rather than repointing the account at a new customer mid-checkout.
+  const claimed = await UserModel.findOneAndUpdate(
+    { _id: userId, $or: [{ stripeCustomerId: '' }, { stripeCustomerId: null }] },
+    { stripeCustomerId: customer.id },
+    { returnDocument: 'after', projection: { stripeCustomerId: 1 } },
+  ).lean()
+
+  return claimed?.stripeCustomerId || customer.id
 }

@@ -102,7 +102,7 @@ export function VideoComments({ videoId }: { videoId: string }) {
       ) : (
         <div className="flex items-center gap-3">
           <p className="text-sm text-muted-foreground">Join the conversation.</p>
-          <SignInPrompt videoId={videoId} label="Sign in to comment" />
+          <SignInPrompt redirect={`/video?id=${videoId}`} label="Sign in to comment" />
         </div>
       )}
 
