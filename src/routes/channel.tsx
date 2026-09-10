@@ -363,6 +363,8 @@ function TierPicker({
               viewerId={viewerId}
               creatorId={channel.creatorId}
               held={channel.viewerTierId === tier.id}
+              pending={channel.pendingTierId === tier.id}
+              status={channel.status}
               subscribed={channel.subscribed}
               busy={busy}
               onSubscribe={() => onSubscribe(tier.id)}
@@ -381,6 +383,12 @@ function TierPicker({
  * button: `startChannelCheckout` would reject them, because one row and one Stripe
  * subscription per channel means switching has to go through a cancellation first.
  * Saying that here is better than a button that only fails.
+ *
+ * `pending` is its own state and must not be confused with `held`. A subscription
+ * row is written before the viewer ever reaches Stripe, so abandoning Checkout
+ * leaves a row naming this tier with nothing paid against it. Treating that as
+ * membership both lies to the viewer and — because it replaces the button — leaves
+ * them no way to finish paying.
  */
 function TierCard({
   tier,
@@ -388,6 +396,8 @@ function TierCard({
   viewerId,
   creatorId,
   held,
+  pending,
+  status,
   subscribed,
   busy,
   onSubscribe,
@@ -397,15 +407,23 @@ function TierCard({
   viewerId: string | null
   creatorId: string
   held: boolean
+  pending: boolean
+  status: string
   subscribed: boolean
   busy: boolean
   onSubscribe: () => void
 }) {
+  // Two different things land in `pending`, and they need different words. A
+  // checkout that was opened and walked away from has never been paid; a lapsed or
+  // cancelled one was. Telling someone whose card expired that they "did not pay"
+  // is both wrong and slightly accusatory.
+  const neverPaid = status.startsWith('incomplete')
   return (
     <div
       className={cn(
         'flex h-full flex-col gap-2 rounded-xl border p-4',
         held && 'border-primary bg-primary/5',
+        pending && 'border-dashed',
       )}
     >
       <p className="flex items-center gap-2 font-medium text-slate-900">
@@ -413,6 +431,10 @@ function TierCard({
         {held ? (
           <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-normal text-white">
             Your tier
+          </span>
+        ) : pending ? (
+          <span className="rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
+            {neverPaid ? 'Not paid' : 'Inactive'}
           </span>
         ) : null}
       </p>
@@ -439,9 +461,28 @@ function TierCard({
             Cancel your current subscription in the billing portal to switch tiers.
           </p>
         ) : (
-          <Button size="sm" className="rounded-full" disabled={busy} onClick={onSubscribe}>
-            {busy ? 'Redirecting…' : 'Subscribe'}
-          </Button>
+          <div className="flex flex-col gap-1">
+            {/* Says what happened before offering the button again: a viewer who
+                backed out of Checkout has a row here but no membership, and
+                "Subscribe" alone would leave them wondering whether the first
+                attempt charged them. */}
+            {pending ? (
+              <p className="text-xs text-slate-500">
+                {neverPaid
+                  ? 'You started this checkout but did not pay, so it is not active.'
+                  : 'Your subscription to this tier is no longer active.'}
+              </p>
+            ) : null}
+            <Button size="sm" className="rounded-full" disabled={busy} onClick={onSubscribe}>
+              {busy
+                ? 'Redirecting…'
+                : pending
+                  ? neverPaid
+                    ? 'Complete payment'
+                    : 'Subscribe again'
+                  : 'Subscribe'}
+            </Button>
+          </div>
         )}
       </div>
     </div>

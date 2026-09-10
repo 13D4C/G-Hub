@@ -9,7 +9,13 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
-import { isEntitled, loadTierRanks, tierRefOf, tierUnlocks } from '@/server/lib/entitlement'
+import {
+  isEntitled,
+  loadTierRanks,
+  tierRefOf,
+  tierStanding,
+  tierUnlocks,
+} from '@/server/lib/entitlement'
 import { getAppUrl, getStripe } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
@@ -84,10 +90,23 @@ export type ChannelView = {
    * not selling anything yet — it is the only thing a channel can sell.
    */
   tiers: Array<MembershipTierView>
-  /** The rung this viewer is on. Null when they are not subscribed, or on a pre-tiers row. */
+  /**
+   * The rung this viewer is actually entitled through — never merely the one they
+   * started paying for.
+   *
+   * `startChannelCheckout` writes the subscription row *before* handing off to
+   * Stripe, so a row naming a tier proves only that a checkout was opened. Reading
+   * that as "on this tier" is how an abandoned checkout came to render as a live
+   * membership, so the distinction is drawn here rather than left to each caller.
+   */
   viewerTierId: string | null
   /** Its name as it read at checkout, for the "Subscribed" line. */
   viewerTierName: string
+  /**
+   * A rung whose checkout was started but never paid for, so the viewer is *not*
+   * entitled through it. The card offers to try again.
+   */
+  pendingTierId: string | null
   videos: Array<ChannelVideo>
 }
 
@@ -136,13 +155,22 @@ export const getChannel = createServerFn({ method: 'GET' })
         .lean(),
     ])
 
-    const viewerTierId = sub?.tierId ? String(sub.tierId) : null
+    // The row's tier says what was *attempted*; only an entitling status says what
+    // was bought. `tierStanding` owns that split so this cannot drift from
+    // `getChannelAccess`, which likewise reports no tier when the row does not
+    // entitle.
+    const rowTierId = sub?.tierId ? String(sub.tierId) : null
+    const {
+      entitled: entitledByRow,
+      heldTierId: viewerTierId,
+      pendingTierId,
+    } = tierStanding(sub ? { ...sub, tierId: rowTierId } : null)
 
     // Ranks for every tier this page compares against, in one query. The ladder is
     // already loaded, but a video can be gated behind an *archived* tier and a
     // viewer can hold one, and neither appears in `tiers`.
     const ranks = await loadTierRanks([
-      viewerTierId,
+      rowTierId,
       ...tiers.map((t) => t.id),
       ...videos.map((v) => v.requiredTierId),
     ])
@@ -161,7 +189,8 @@ export const getChannel = createServerFn({ method: 'GET' })
       isOwner,
       tiers,
       viewerTierId,
-      viewerTierName: sub?.tierName ?? '',
+      viewerTierName: entitledByRow ? (sub?.tierName ?? '') : '',
+      pendingTierId,
       videos: videos.map((v) => {
         const visibility = v.visibility as VideoVisibility
         const premium = visibility === 'subscriber'
@@ -188,7 +217,7 @@ export const getChannel = createServerFn({ method: 'GET' })
           // subscription's own snapshot of the name where we have it.
           requiredTierName: requiredTierId
             ? (tierNameById.get(requiredTierId) ??
-              (requiredTierId === viewerTierId ? (sub?.tierName ?? '') : ''))
+              (requiredTierId === rowTierId ? (sub?.tierName ?? '') : ''))
             : '',
         }
       }),

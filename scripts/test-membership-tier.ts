@@ -24,7 +24,11 @@ import { MembershipTierModel } from '../src/server/db/models/membership-tier.ts'
 import { UserModel } from '../src/server/db/models/user.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
 import { connectToDatabase } from '../src/server/db/mongoose.ts'
-import { requirePlayableVideo } from '../src/server/lib/entitlement.ts'
+import {
+  getChannelAccess,
+  requirePlayableVideo,
+  tierStanding,
+} from '../src/server/lib/entitlement.ts'
 
 const tag = `tier-test-${Date.now()}`
 const CUSTOMER = 'cus_tier_test'
@@ -201,6 +205,42 @@ async function main() {
     null,
     'the uploader still watches their own private video',
   )
+
+  // An abandoned Checkout, against real rows. `startChannelCheckout` writes the
+  // subscription before the viewer ever reaches Stripe, so backing out of the
+  // payment page leaves exactly this: a row naming Gold with nothing paid against
+  // it. Everything downstream must read it as "not a subscriber", including the
+  // channel page — which once announced "You are on this tier" here while the gate
+  // correctly refused entry, and hid the button needed to finish paying.
+  await ChannelSubscriptionModel.updateOne(
+    { subscriberId: viewer._id, creatorId: creator._id },
+    { $set: { status: 'incomplete', currentPeriodEnd: null, tierId: gold._id, tierName: 'Gold' } },
+  )
+
+  const abandoned = await ChannelSubscriptionModel.findOne({
+    subscriberId: viewer._id,
+    creatorId: creator._id,
+  })
+    .select('status currentPeriodEnd tierId')
+    .lean()
+  assert.deepEqual(
+    tierStanding({
+      status: abandoned!.status,
+      currentPeriodEnd: abandoned!.currentPeriodEnd,
+      tierId: String(abandoned!.tierId),
+    }),
+    { entitled: false, heldTierId: null, pendingTierId: String(gold._id) },
+    'an abandoned checkout is pending, never held',
+  )
+
+  const access = await getChannelAccess(viewerId, creator._id)
+  assert.deepEqual(
+    access,
+    { subscribed: false, tierId: null, isOwner: false },
+    'the gate must see no subscription and no tier',
+  )
+  assert.equal(await denial(goldId, viewerId), INTERACTION_ERRORS.subscriptionRequired)
+  assert.equal(await denial(anyId, viewerId), INTERACTION_ERRORS.subscriptionRequired)
 
   // A lapsed period closes every rung at once — the entitlement check runs first.
   await ChannelSubscriptionModel.updateOne(
