@@ -8,6 +8,7 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
+import { settleTipSession } from '@/server/lib/tip-settle'
 
 /**
  * One-time tips: a viewer paying a creator directly, either from under a video or
@@ -94,10 +95,38 @@ export const startTipCheckout = createServerFn({ method: 'POST' })
       // The only record of who tipped whom until the webhook lands, stamped
       // server-side. `settleTipSession` reads the row back out of here.
       metadata: { supporterId, creatorId, videoId: data.videoId ?? '' },
-      success_url: `${appUrl}${returnPath}&tip=success`,
+      // The session id travels back in the URL so the return can settle the tip
+      // itself. Without it the webhook is the *only* settlement path, and a tip
+      // whose webhook never arrives is money taken that no creator is ever
+      // credited for — with nothing left to recover it from.
+      success_url: `${appUrl}${returnPath}&tip=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${appUrl}${returnPath}&tip=cancel`,
     })
 
     if (!session.url) throw new Error('Stripe returned a Checkout session with no URL.')
     return { url: session.url }
+  })
+
+const confirmTipSchema = z.object({ sessionId: z.string().min(1).max(200) })
+
+/**
+ * Settle the tip for a viewer just back from Checkout.
+ *
+ * The webhook remains the durable path — a viewer who pays and closes the tab never
+ * reaches this — but it is no longer the only one. Both call the same idempotent
+ * `settleTipSession`, which re-reads the session from Stripe and upserts on its id,
+ * so whichever arrives first wins and the second is a no-op.
+ *
+ * The session id comes out of the URL and is treated as untrusted, but it needs no
+ * ownership check the way `confirmChannelCheckout` does: this grants nothing to the
+ * caller. Every field written — who tipped, who was tipped, how much — is read back
+ * from Stripe's own copy of the session, so the worst a forged id can do is settle
+ * some other genuinely-paid tip correctly and early.
+ */
+export const confirmTip = createServerFn({ method: 'POST' })
+  .validator(confirmTipSchema)
+  .handler(async ({ data }): Promise<void> => {
+    await requireUserId()
+    await connectToDatabase()
+    await settleTipSession(data.sessionId)
   })
