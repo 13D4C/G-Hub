@@ -15,18 +15,23 @@ const userSchema = new mongoose.Schema(
     avatarUrl: { type: String, default: '' },
 
     // --- Channel ---
-    // Every account is potentially a channel; it only becomes one a viewer can
-    // subscribe to once `subscriptionPriceCents` is above zero. There is no separate
-    // `channel` collection because a channel has no identity of its own — it is the
-    // creator, and a second collection would only be a second name for the same row.
+    // Every account is potentially a channel; it becomes one a viewer can subscribe
+    // to once it has at least one membership tier. There is no separate `channel`
+    // collection because a channel has no identity of its own — it is the creator,
+    // and a second collection would only be a second name for the same row.
+    //
+    // Nothing here prices anything. A channel used to carry a single
+    // `subscriptionPriceCents`, which meant two systems could sell access to the
+    // same videos and disagree about what a subscriber had bought; `membershiptier`
+    // is now the only one. `scripts/migrate-channel-price-to-tier.ts` converted the
+    // old field before it was dropped.
     channelName: { type: String, default: '', trim: true },
     channelDescription: { type: String, default: '' },
     /**
-     * Monthly price of this creator's channel subscription, in the minor unit of
-     * `channelCurrency` (so 4900 = $49.00). Zero means the channel is not accepting
-     * subscribers, which is the default for every account.
+     * The currency every tier on this channel is priced in. It lives on the channel
+     * rather than on each tier so a ladder cannot be half in dollars and half in
+     * euros, which is a ladder a viewer cannot compare.
      */
-    subscriptionPriceCents: { type: Number, default: 0, min: 0 },
     channelCurrency: { type: String, default: 'usd', lowercase: true, trim: true },
 
     // --- Billing ---

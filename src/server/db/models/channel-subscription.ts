@@ -35,6 +35,31 @@ const channelSubscriptionSchema = new mongoose.Schema(
     // the period on the item, not the subscription). Null before the first invoice.
     currentPeriodEnd: { type: Date, default: null },
     cancelAtPeriodEnd: { type: Boolean, default: false },
+    /**
+     * The membership tier this subscription pays for. Always set on anything bought
+     * since tiers became the only thing a channel sells; null survives only on rows
+     * written against the old flat channel price.
+     *
+     * Such a row still counts as an active subscription — it was paid for — but
+     * opens no tier-gated video, because it names no rung to compare. See
+     * `tierUnlocks`, and `scripts/migrate-channel-price-to-tier.ts`, which moves
+     * these onto a real tier.
+     *
+     * A reference, not a rank snapshot: the rank is read from the tier row at check
+     * time so a creator reordering their ladder moves every subscriber with it.
+     * Two copies of the same rank is how a subscriber ends up entitled by one code
+     * path and denied by another.
+     */
+    tierId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'membershipTier',
+      default: null,
+    },
+    /**
+     * The tier's name as it read at checkout. Display only — never used to decide
+     * access — so a renamed tier does not rewrite the subscriber's receipt.
+     */
+    tierName: { type: String, default: '' },
     // What the viewer agreed to pay, snapshotted so a later price change on the
     // channel does not rewrite history on the subscriber's own billing view.
     priceCents: { type: Number, default: 0 },

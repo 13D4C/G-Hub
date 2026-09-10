@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { BarChart3, Eye, Globe, Heart, Lock, Users } from 'lucide-react'
+import { BarChart3, Eye, EyeOff, Globe, Heart, Users } from 'lucide-react'
 import { EmptyState } from '@/components/empty-state'
 import { Card } from '@/components/ui/card'
 import { meQueryOptions } from '@/lib/auth'
 import { formatPrice } from '@/lib/channels'
 import { dashboardQueryOptions, formatCount } from '@/lib/dashboard'
 import { formatDate } from '@/lib/utils'
+import { VIDEO_VISIBILITY_LABELS } from '@/lib/video-visibility'
 import type { CreatorDashboard } from '@/server/functions/dashboard'
 
 /**
@@ -51,9 +52,12 @@ function DashboardPage() {
             search={{ id: viewer.id }}
             className="text-sm font-medium text-white/80 underline-offset-4 hover:text-white hover:underline"
           >
-            {data.priceCents > 0
-              ? `Subscription: ${formatPrice(data.priceCents, currency)}/month`
-              : 'Set a subscription price →'}
+            {data.tiers.length > 0
+              ? `${data.tiers.length} membership tier${data.tiers.length === 1 ? '' : 's'}, from ${formatPrice(
+                  Math.min(...data.tiers.map((t) => t.priceCents)),
+                  currency,
+                )}/month`
+              : 'Add a membership tier →'}
           </Link>
         ) : null}
       </div>
@@ -171,10 +175,12 @@ function VideoRow({
         >
           {video.visibility === 'public' ? (
             <Globe className="size-3.5" />
+          ) : video.visibility === 'subscriber' ? (
+            <Users className="size-3.5" />
           ) : (
-            <Lock className="size-3.5" />
+            <EyeOff className="size-3.5" />
           )}
-          {video.visibility === 'public' ? 'Public' : 'Premium'}
+          {VIDEO_VISIBILITY_LABELS[video.visibility]}
         </span>
       </td>
       <td className="px-5 py-3 text-slate-600">{formatDate(video.createdAt)}</td>

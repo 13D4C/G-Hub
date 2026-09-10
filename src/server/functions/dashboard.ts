@@ -7,6 +7,8 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-totals'
+import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
+import type { VideoVisibility } from '@/lib/video-visibility'
 
 /**
  * The creator dashboard: everything one account's channel has earned and been
@@ -20,7 +22,7 @@ import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-to
 export type DashboardVideo = {
   id: string
   title: string
-  visibility: 'public' | 'private'
+  visibility: VideoVisibility
   createdAt: string
   viewCount: number
   likeCount: number
@@ -32,8 +34,14 @@ export type DashboardVideo = {
 export type CreatorDashboard = {
   channelName: string
   currency: string
-  /** Minor units; zero means the channel is not selling subscriptions. */
-  priceCents: number
+  /**
+   * What this channel sells, cheapest rung first. Empty means it sells nothing yet.
+   *
+   * A list rather than the single `priceCents` this used to report: a channel no
+   * longer has one price. Membership tiers are the only thing it sells, and
+   * quoting just one of them would understate a ladder.
+   */
+  tiers: Array<MembershipTierView>
   totals: DashboardTotals
   videos: Array<DashboardVideo>
 }
@@ -43,10 +51,11 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
     const creatorId = await requireUserId()
     await connectToDatabase()
 
-    const [creator, videos, tipsByVideo, subs] = await Promise.all([
-      UserModel.findById(creatorId)
-        .select('name channelName channelCurrency subscriptionPriceCents')
-        .lean(),
+    const [creator, tiers, videos, tipsByVideo, subs] = await Promise.all([
+      UserModel.findById(creatorId).select('name channelName channelCurrency').lean(),
+      // Through the shared reader, so the dashboard and the channel page cannot
+      // disagree about what the ladder is.
+      readLadder(creatorId),
       VideoModel.find({ uploadedBy: creatorId })
         .select('title visibility createdAt viewCount likeCount shareCount')
         .sort({ createdAt: -1 })
@@ -78,12 +87,12 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
     return {
       channelName: creator?.channelName || creator?.name || 'Your channel',
       currency: creator?.channelCurrency || 'usd',
-      priceCents: creator?.subscriptionPriceCents ?? 0,
+      tiers,
       totals: summarizeTotals(videos, tipsByVideo, subs),
       videos: videos.map((v) => ({
         id: String(v._id),
         title: v.title,
-        visibility: v.visibility,
+        visibility: v.visibility as VideoVisibility,
         createdAt: v.createdAt.toISOString(),
         viewCount: v.viewCount ?? 0,
         likeCount: v.likeCount ?? 0,
