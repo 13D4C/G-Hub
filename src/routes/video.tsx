@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/empty-state'
 import { VideoCard } from '@/components/video-card'
 import { VideoComments } from '@/components/video-comments'
+import { TipNotice } from '@/components/tip-button'
 import { VideoInteractionBar } from '@/components/video-interaction-bar'
 import { VideoPlayer } from '@/components/video-player'
 import { Button } from '@/components/ui/button'
@@ -17,6 +18,8 @@ import { z } from 'zod'
 
 const videoSearchSchema = z.object({
   id: z.string().optional(),
+  /** Set by Stripe when it returns a viewer here after tipping. */
+  tip: z.enum(['success', 'cancel']).optional().catch(undefined),
 })
 
 /**
@@ -70,6 +73,7 @@ export const Route = createFileRoute('/video')({
 
 function VideoPage() {
   const { videos, playback, locked } = Route.useLoaderData()
+  const { tip } = Route.useSearch()
   const currentId = playback?.video.id ?? locked?.id
   const moreVideos = videos.filter((video) => video.id !== currentId)
 
@@ -96,7 +100,8 @@ function VideoPage() {
                 <p className="whitespace-pre-line text-sm text-slate-700">
                   {playback.video.description || 'No description provided.'}
                 </p>
-                <VideoInteractionBar videoId={playback.video.id} />
+                <VideoInteractionBar videoId={playback.video.id} channel={playback.channel} />
+                <TipNotice tip={tip} />
               </Card>
 
               <Card className="flex flex-col gap-4 p-5">

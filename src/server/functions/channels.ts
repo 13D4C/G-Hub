@@ -4,10 +4,11 @@ import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
 import { UserModel } from '@/server/db/models/user'
+import { TipModel } from '@/server/db/models/tip'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { isEntitled } from '@/server/lib/entitlement'
-import { getAppUrl, getStripe } from '@/server/lib/stripe'
+import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
 /**
@@ -62,6 +63,8 @@ export type ChannelView = {
   cancelAtPeriodEnd: boolean
   /** The viewer owns this channel, so there is nothing to sell them. */
   isOwner: boolean
+  /** Everything this channel has ever been tipped, in minor units of `currency`. */
+  tipTotalCents: number
   videos: Array<ChannelVideo>
 }
 
@@ -101,6 +104,13 @@ export const getChannel = createServerFn({ method: 'GET' })
       .limit(100)
       .lean()
 
+    // Every tip row is money that actually arrived — see `models/tip.ts` — so this
+    // sums the collection with no status filter.
+    const [tips] = await TipModel.aggregate<{ total: number }>([
+      { $match: { creatorId: creator._id } },
+      { $group: { _id: null, total: { $sum: '$amountCents' } } },
+    ])
+
     return {
       creatorId: String(creator._id),
       name: creator.channelName || creator.name || 'Untitled channel',
@@ -112,6 +122,7 @@ export const getChannel = createServerFn({ method: 'GET' })
       currentPeriodEnd: sub?.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
       isOwner,
+      tipTotalCents: tips?.total ?? 0,
       videos: videos.map((v) => {
         const premium = v.visibility !== 'public'
         return {
@@ -159,36 +170,6 @@ export const updateChannelSettings = createServerFn({ method: 'POST' })
     await UserModel.updateOne({ _id: userId }, { $set: data })
     return { priceCents: data.subscriptionPriceCents }
   })
-
-/**
- * The viewer's Stripe customer id, creating the customer on first use and caching it
- * on the account. One customer per viewer, reused across every channel they
- * subscribe to.
- *
- * Assumes the caller has already connected to the database.
- */
-async function ensureCustomerId(userId: string): Promise<string> {
-  const user = await UserModel.findById(userId).select('email name stripeCustomerId').lean()
-  if (user?.stripeCustomerId) return user.stripeCustomerId
-
-  const customer = await getStripe().customers.create({
-    email: user?.email,
-    name: user?.name || undefined,
-    // Lets a human trace a customer back to an account in the Stripe dashboard.
-    metadata: { userId },
-  })
-
-  // Conditional on the field still being empty, so a concurrent double submit keeps
-  // whichever id landed first and leaves this one orphaned in the test account,
-  // rather than repointing the account at a new customer mid-checkout.
-  const claimed = await UserModel.findOneAndUpdate(
-    { _id: userId, $or: [{ stripeCustomerId: '' }, { stripeCustomerId: null }] },
-    { stripeCustomerId: customer.id },
-    { returnDocument: 'after', projection: { stripeCustomerId: 1 } },
-  ).lean()
-
-  return claimed?.stripeCustomerId || customer.id
-}
 
 /**
  * Start a hosted Checkout for this channel's monthly subscription and return the URL

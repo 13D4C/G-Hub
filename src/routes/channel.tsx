@@ -4,6 +4,7 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { Lock, Play, Tv } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '@/components/empty-state'
+import { TipButton, TipNotice } from '@/components/tip-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -24,6 +25,8 @@ const channelSearchSchema = z.object({
   /** Set by Stripe when it returns the viewer here. */
   checkout: z.enum(['success', 'cancel']).optional().catch(undefined),
   session_id: z.string().optional().catch(undefined),
+  /** Set by Stripe when it returns a viewer here after a one-time tip. */
+  tip: z.enum(['success', 'cancel']).optional().catch(undefined),
 })
 
 export const Route = createFileRoute('/channel')({
@@ -144,6 +147,19 @@ function ChannelPage() {
           <p className="text-sm text-slate-500">This channel is not accepting subscribers yet.</p>
         )}
 
+        {/* Only once someone has actually tipped — a channel sitting at "$0.00 in
+            tips" reads worse than a channel saying nothing. */}
+        {channel.tipTotalCents > 0 ? (
+          <p className="text-sm text-slate-500">
+            <span className="font-semibold text-slate-900">
+              {formatPrice(channel.tipTotalCents, channel.currency)}
+            </span>{' '}
+            in tips from viewers.
+          </p>
+        ) : null}
+
+        <TipNotice tip={search.tip} />
+
         {/* Stripe redirects back mid-payment; say so rather than showing a bare
             "Subscribe" as if nothing had happened. */}
         {search.checkout === 'cancel' ? (
@@ -169,7 +185,7 @@ function ChannelPage() {
         ) : null}
 
         {channel.isOwner ? null : (
-          <div>
+          <div className="flex flex-wrap items-center gap-2">
             {!viewerId ? (
               <Button asChild className="rounded-full">
                 <Link to="/login" search={{ redirect: `/channel?id=${channel.creatorId}` }}>
@@ -194,6 +210,18 @@ function ChannelPage() {
                 {subscribe.isPending ? 'Redirecting…' : `Subscribe — ${price}/month`}
               </Button>
             )}
+
+            {/* Tipping needs no subscription and no price on the channel — it is
+                open even where `Subscribe` is disabled. Signed-out viewers already
+                have the sign-in button above, so this stays out of their way. */}
+            {viewerId ? (
+              <TipButton
+                creatorId={channel.creatorId}
+                creatorName={channel.name}
+                currency={channel.currency}
+                redirect={`/channel?id=${channel.creatorId}`}
+              />
+            ) : null}
           </div>
         )}
       </Card>
