@@ -112,11 +112,19 @@ export function VideoCard({
               />
             </div>
           </div>
-          {/* Unlocked but still premium: say so, otherwise a subscriber cannot tell
-              what their subscription is actually paying for. */}
-          {video.premium ? (
-            <span className="absolute top-2 left-2 rounded bg-primary/90 px-1.5 py-0.5 text-xs font-medium text-white">
-              Premium
+          {/* Unlocked but not public: say which, otherwise a subscriber cannot
+              tell what their subscription is paying for, and a creator cannot tell
+              at a glance that a video is still hidden from everyone. A `private`
+              card only ever reaches its own uploader — `listVideos` filters it out
+              for everybody else. */}
+          {video.visibility !== 'public' ? (
+            <span
+              className={cn(
+                'absolute top-2 left-2 rounded px-1.5 py-0.5 text-xs font-medium text-white',
+                video.visibility === 'private' ? 'bg-slate-700/90' : 'bg-primary/90',
+              )}
+            >
+              {video.visibility === 'private' ? 'Private' : 'Premium'}
             </span>
           ) : null}
           {video.durationSeconds > 0 && (

@@ -15,6 +15,10 @@
     "settle-tips": "node --env-file=.env --experimental-strip-types scripts/settle-tips.ts",
     "test:entitlement": "node --experimental-strip-types scripts/test-entitlement.ts",
     "test:channel-gate": "node --env-file=.env --experimental-strip-types scripts/test-channel-gate.ts",
+    "migrate:channel-price": "node --env-file=.env --experimental-strip-types scripts/migrate-channel-price-to-tier.ts",
+    "migrate:visibility": "node --env-file=.env --experimental-strip-types scripts/migrate-video-visibility.ts",
+    "test:tier-access": "node --experimental-strip-types scripts/test-tier-access.ts",
+    "test:membership-tier": "node --env-file=.env --experimental-strip-types scripts/test-membership-tier.ts",
     "test:tips": "node --experimental-strip-types scripts/test-tips.ts",
     "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts"
   },

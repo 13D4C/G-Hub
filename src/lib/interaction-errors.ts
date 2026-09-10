@@ -9,6 +9,10 @@ export const INTERACTION_ERRORS = {
   // Premium video, no active subscription to its channel. Distinct from
   // `videoNotFound` on purpose: a paywall the viewer can open is not a secret.
   subscriptionRequired: 'Subscribe to this channel to watch this video.',
+  // Subscribed, but on a rung of the ladder below the one this video is gated
+  // behind. Distinct from `subscriptionRequired` because the fix is different: this
+  // viewer is already paying and needs to upgrade, not to subscribe.
+  tierRequired: 'This video needs a higher membership tier.',
   // Deliberately does not distinguish "gone" from "not yours" — never leak whether
   // another viewer's comment exists.
   commentNotFound: 'That comment no longer exists.',
