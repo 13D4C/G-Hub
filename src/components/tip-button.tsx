@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { HandCoins } from 'lucide-react'
 import { SignInPrompt } from '@/components/sign-in-prompt'
 import { Button } from '@/components/ui/button'
@@ -16,16 +16,16 @@ import { Label } from '@/components/ui/label'
 import { describeMutationError, meQueryOptions } from '@/lib/auth'
 import { formatPrice } from '@/lib/channels'
 import { TIP_MAX_CENTS, TIP_MIN_CENTS, TIP_PRESETS_CENTS, parseTipAmount } from '@/lib/tips'
-import { startTipCheckout } from '@/server/functions/tips'
+import { confirmTip, startTipCheckout } from '@/server/functions/tips'
 
 /**
  * Send a creator a one-time tip. The same control on both entry points: under a
  * video, where `videoId` attributes the tip to what the viewer was watching, and on
  * the channel page, where it is a plain donation.
  *
- * A tip buys nothing — no premium unlock, no subscription — so there is nothing to
- * refresh when the viewer comes back. The channel page's total updates on its next
- * load, once the webhook has settled the payment.
+ * A tip buys nothing — no premium unlock, no subscription — so nothing on the page
+ * changes for the person sending it. What does change is the creator's total, which
+ * `TipNotice` settles and refreshes when the viewer lands back here.
  */
 export function TipButton({
   creatorId,
@@ -143,19 +143,49 @@ export function TipButton({
 }
 
 /**
- * What Stripe's redirect back is turned into. Shared by both entry points because
- * both send the viewer home with the same `?tip=` marker.
+ * What Stripe's redirect back is turned into — and where the tip is settled.
  *
- * "Thanks" is deliberately not "recorded": the webhook settles the tip a moment
- * later, so the total this page shows may still be one tip behind.
+ * Settling here as well as in the webhook is the difference between a tip that
+ * survives a missed webhook and one that is silently lost: `settleTipSession` is the
+ * same idempotent upsert either way, so whichever path arrives first records the
+ * money and the other is a no-op. Without this the webhook is a single point of
+ * failure on a path where failing means a creator is never paid.
  */
-export function TipNotice({ tip }: { tip?: 'success' | 'cancel' }) {
+export function TipNotice({ tip, sessionId }: { tip?: 'success' | 'cancel'; sessionId?: string }) {
+  const queryClient = useQueryClient()
+
+  const confirm = useMutation({
+    mutationFn: (id: string) => confirmTip({ data: { sessionId: id } }),
+    // The channel page shows a running tip total; it is one tip stale until this.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['channel'] }),
+  })
+
+  /**
+   * The ref guards React 19's development double-effect and any re-render before
+   * the URL is cleaned up. The server function is idempotent either way — this only
+   * saves a second round trip.
+   */
+  const confirmed = useRef<string>(undefined)
+  const confirmMutate = confirm.mutate
+  useEffect(() => {
+    if (tip !== 'success' || !sessionId) return
+    if (confirmed.current === sessionId) return
+    confirmed.current = sessionId
+    confirmMutate(sessionId)
+  }, [tip, sessionId, confirmMutate])
+
   if (!tip) return null
+
   return (
     <p role="status" className="text-sm text-slate-500">
-      {tip === 'success'
-        ? 'Thanks for the tip — the creator will see it shortly.'
-        : 'Tip cancelled — you have not been charged.'}
+      {tip === 'cancel'
+        ? 'Tip cancelled — you have not been charged.'
+        : confirm.isError
+          ? // The webhook is still coming, so this is a delay and not a loss.
+            'Thanks for the tip — it is taking a moment to register.'
+          : confirm.isSuccess
+            ? 'Thanks for the tip — the creator has been credited.'
+            : 'Thanks for the tip — recording it now…'}
     </p>
   )
 }

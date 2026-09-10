@@ -20,6 +20,8 @@ const videoSearchSchema = z.object({
   id: z.string().optional(),
   /** Set by Stripe when it returns a viewer here after tipping. */
   tip: z.enum(['success', 'cancel']).optional().catch(undefined),
+  /** The tip's Checkout session, which `TipNotice` settles on arrival. */
+  session_id: z.string().optional().catch(undefined),
 })
 
 /**
@@ -73,7 +75,7 @@ export const Route = createFileRoute('/video')({
 
 function VideoPage() {
   const { videos, playback, locked } = Route.useLoaderData()
-  const { tip } = Route.useSearch()
+  const { tip, session_id } = Route.useSearch()
   const currentId = playback?.video.id ?? locked?.id
   const moreVideos = videos.filter((video) => video.id !== currentId)
 
@@ -101,7 +103,7 @@ function VideoPage() {
                   {playback.video.description || 'No description provided.'}
                 </p>
                 <VideoInteractionBar videoId={playback.video.id} channel={playback.channel} />
-                <TipNotice tip={tip} />
+                <TipNotice tip={tip} sessionId={session_id} />
               </Card>
 
               <Card className="flex flex-col gap-4 p-5">

@@ -25,7 +25,11 @@ const channelSearchSchema = z.object({
   /** Set by Stripe when it returns the viewer here. */
   checkout: z.enum(['success', 'cancel']).optional().catch(undefined),
   session_id: z.string().optional().catch(undefined),
-  /** Set by Stripe when it returns a viewer here after a one-time tip. */
+  /**
+   * Set by Stripe when it returns a viewer here after a one-time tip. It shares
+   * `session_id` with the subscription return above — the two never arrive
+   * together, since one checkout produces one redirect.
+   */
   tip: z.enum(['success', 'cancel']).optional().catch(undefined),
 })
 
@@ -158,7 +162,7 @@ function ChannelPage() {
           </p>
         ) : null}
 
-        <TipNotice tip={search.tip} />
+        <TipNotice tip={search.tip} sessionId={search.session_id} />
 
         {/* Stripe redirects back mid-payment; say so rather than showing a bare
             "Subscribe" as if nothing had happened. */}

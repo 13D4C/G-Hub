@@ -145,6 +145,12 @@ export const getVideoById = createServerFn({ method: 'GET' })
     const { video, subscribed } = await requirePlayableVideo(data.videoId, viewerId)
     const preroll = video.adsEnabled && !subscribed ? await pickPrerollAd() : null
 
+    // The one place a view is counted: this is the only handler that hands out a
+    // playable `url`, so a locked video never scores a view and no other caller has
+    // to remember to increment. `$inc` rather than a read-modify-write so concurrent
+    // viewers cannot overwrite each other.
+    await VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } })
+
     return {
       video: {
         id: String(video._id),
