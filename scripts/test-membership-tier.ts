@@ -88,7 +88,7 @@ async function main() {
     VideoModel.create({
       title: `${tag} ${title}`,
       url: `http://example.test/${title}.mp4`,
-      visibility: 'private',
+      visibility: 'subscriber',
       uploadedBy: creator._id,
       requiredTierId,
     })
@@ -185,6 +185,22 @@ async function main() {
     await denial(String(otherVideo._id), viewerId),
     INTERACTION_ERRORS.subscriptionRequired,
     'a tier on one channel must not unlock another',
+  )
+
+  // Visibility outranks the ladder: a private video is the uploader's alone, and no
+  // tier — however high, however expensive — is a way in.
+  const hidden = await premium('hidden', gold._id)
+  await VideoModel.updateOne({ _id: hidden._id }, { visibility: 'private' })
+  await subscribeAt(viewer._id, creator._id, gold._id)
+  assert.equal(
+    await denial(String(hidden._id), viewerId),
+    INTERACTION_ERRORS.videoNotFound,
+    'no tier opens a private video',
+  )
+  assert.equal(
+    await denial(String(hidden._id), creatorId),
+    null,
+    'the uploader still watches their own private video',
   )
 
   // A lapsed period closes every rung at once — the entitlement check runs first.

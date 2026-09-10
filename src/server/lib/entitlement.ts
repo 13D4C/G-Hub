@@ -13,10 +13,10 @@ import { tierUnlocks, type TierRef } from './tier-access.ts'
 
 /**
  * Who is allowed to watch what. Every playback and interaction handler routes through
- * `requirePlayableVideo`, so the rules — public is open, premium needs a subscription
- * to that channel, and a tier-gated video needs that tier or better — exist in exactly
- * one place. A second copy is how a subscriber ends up able to watch a video but not
- * like it.
+ * `requirePlayableVideo`, so the rules — public is open, `subscriber` needs a
+ * subscription to that channel and the right tier, and `private` is the uploader's
+ * alone — exist in exactly one place. A second copy is how a subscriber ends up able
+ * to watch a video but not like it.
  */
 
 // One import site for callers that only need the predicates.
@@ -130,10 +130,15 @@ export async function unlocksTier(
  * The video, if this viewer may watch it, plus their standing on its channel — the
  * caller needs the second answer to render the paywall and would otherwise re-query.
  *
- * A missing video, a video behind a paywall, and a video behind a *higher* tier give
- * three different messages on purpose. A premium video is a paywalled one, not a
- * hidden one; and telling a paying Silver subscriber to "subscribe" when they already
- * have would read as a bug rather than as an upsell.
+ * A paywalled video and one behind a *higher* tier give different messages on
+ * purpose. A `subscriber` video is a paywalled one, not a hidden one; and telling a
+ * paying Silver subscriber to "subscribe" when they already have would read as a bug
+ * rather than as an upsell.
+ *
+ * A `private` video is the exception: it reports as missing rather than as locked.
+ * There is nothing to sell, so a distinct message would only confirm to a stranger
+ * that the video exists — the same reasoning as `deleteComment`, which refuses to
+ * distinguish "gone" from "not yours".
  *
  * Assumes the caller has already connected to the database.
  */
@@ -145,7 +150,9 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
   // that is only true when the paywall forced it would be a lie the UI reads.
   const access = await getChannelAccess(viewerId, video.uploadedBy)
 
-  if (video.visibility !== 'public') {
+  if (video.visibility === 'private') {
+    if (!access.isOwner) throw new Error(INTERACTION_ERRORS.videoNotFound)
+  } else if (video.visibility === 'subscriber') {
     if (!access.subscribed) throw new Error(INTERACTION_ERRORS.subscriptionRequired)
     if (!(await unlocksTier(access, video.requiredTierId))) {
       throw new Error(INTERACTION_ERRORS.tierRequired)
@@ -153,4 +160,18 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
   }
 
   return { video, ...access }
+}
+
+/**
+ * The Mongo filter that hides other people's `private` videos from a catalogue.
+ *
+ * Kept here beside the gate rather than inlined at each call site: a listing that
+ * forgets it would leak a private video's title into the browsable grid, and
+ * `requirePlayableVideo` would then refuse to play the thing it just advertised.
+ */
+export function visibleToViewerFilter(viewerId: string | null) {
+  // `as const` matters: without it the literal widens to `string` and no longer
+  // satisfies Mongoose's typed filter for the `visibility` enum.
+  const notPrivate = { visibility: { $ne: 'private' as const } }
+  return viewerId ? { $or: [notPrivate, { uploadedBy: viewerId }] } : notPrivate
 }

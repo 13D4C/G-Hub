@@ -90,7 +90,9 @@ async function main() {
 
   for (const [dir, visibility] of [
     ['videos', 'public'],
-    ['premium', 'private'],
+    // `subscriber`, not `private`: these are the paywalled samples, and `private`
+    // now means the uploader alone. See `scripts/migrate-video-visibility.ts`.
+    ['premium', 'subscriber'],
   ] as const) {
     for (const file of dir === 'videos' ? videoFiles : premiumFiles) {
       const title = titleFromFile(file)

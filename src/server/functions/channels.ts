@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
+import type { VideoVisibility } from '@/lib/video-visibility'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
 import { MembershipTierModel } from '@/server/db/models/membership-tier'
@@ -48,7 +49,8 @@ export type ChannelVideo = {
   title: string
   description: string
   durationSeconds: number
-  /** True for `visibility: 'private'` — playable only by an active subscriber. */
+  visibility: VideoVisibility
+  /** True for `visibility: 'subscriber'` — playable only by an active subscriber. */
   premium: boolean
   /** False when this viewer may not play it, which is what draws the lock. */
   unlocked: boolean
@@ -117,9 +119,15 @@ export const getChannel = createServerFn({ method: 'GET' })
     // Premium videos are listed to everyone: the point of a paywall is that a viewer
     // can see what they would be buying. Only the media `url` is withheld, and it is
     // never selected here — playback goes through `getVideoById`, which re-checks.
+    // The owner sees their own private videos here; nobody else learns they exist.
+    // Applied in the query rather than by filtering the result, so a private title
+    // never leaves the database on someone else's request.
     const [tiers, videos] = await Promise.all([
       readLadder(creator._id),
-      VideoModel.find({ uploadedBy: creator._id })
+      VideoModel.find({
+        uploadedBy: creator._id,
+        ...(isOwner ? {} : { visibility: { $ne: 'private' } }),
+      })
         .select('title description durationSeconds visibility requiredTierId')
         .sort({ createdAt: -1 })
         .limit(100)
@@ -154,10 +162,12 @@ export const getChannel = createServerFn({ method: 'GET' })
       viewerTierId,
       viewerTierName: sub?.tierName ?? '',
       videos: videos.map((v) => {
-        const premium = v.visibility !== 'public'
+        const visibility = v.visibility as VideoVisibility
+        const premium = visibility === 'subscriber'
         const requiredTierId = v.requiredTierId ? String(v.requiredTierId) : null
         // The same two-part rule as `requirePlayableVideo`: subscribed at all, and
-        // then high enough on the ladder. The owner clears both by right.
+        // then high enough on the ladder. The owner clears both by right — and a
+        // private row only reached here at all if they are the owner.
         const unlocked =
           !premium ||
           isOwner ||
@@ -168,6 +178,7 @@ export const getChannel = createServerFn({ method: 'GET' })
           title: v.title,
           description: v.description,
           durationSeconds: v.durationSeconds,
+          visibility,
           premium,
           unlocked,
           requiredTierId,

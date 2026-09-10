@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
+import { VIDEO_VISIBILITIES } from '@/lib/video-visibility'
 import { requireUserId } from '@/server/auth/require-user'
 import {
   MAX_TIERS_PER_CREATOR,
@@ -176,54 +177,64 @@ export const archiveMembershipTier = createServerFn({ method: 'POST' })
     return { id: data.tierId }
   })
 
-const setVideoTierSchema = z.object({
+const updateVideoAccessSchema = z.object({
   videoId: objectId,
-  /** Null clears the gate: any active subscriber may watch. */
+  visibility: z.enum(VIDEO_VISIBILITIES),
+  /** Null means "any active subscriber". Ignored unless `visibility` is `subscriber`. */
   tierId: objectId.nullable(),
 })
 
 /**
- * Map one of the creator's own uploaded videos onto a tier — the third acceptance
- * criterion, and the only way to gate a video after it has been uploaded.
+ * Change who may watch one of the creator's own uploads: how wide the audience is,
+ * and — for a `subscriber` video — which membership tier it needs. This is the third
+ * acceptance criterion, and the only way to re-gate a video after upload.
  *
- * Setting a tier implies the video is premium, so this flips `visibility` to
- * `private` as well, and turns preroll ads off for the same reason `createVideo`
- * does: a public video carrying a tier gate is a contradiction the gate would
- * resolve in the viewer's favour, quietly giving away what the creator just priced.
+ * Both settings move together in one call rather than through two functions. They
+ * constrain each other, and two independent writes would let a video sit as
+ * `public` with a tier gate hanging off it: a contradiction the player would resolve
+ * in the viewer's favour, quietly giving away what the creator just priced.
  *
- * Clearing the tier deliberately does *not* flip visibility back. "Any subscriber"
- * is a valid premium setting, so guessing that a cleared gate means "make it public"
- * would un-paywall a video on a click meant to widen it.
+ * The tier is therefore cleared for anything but `subscriber`, and preroll ads are
+ * recomputed here the same way `createVideo` computes them, so a video that stops
+ * being public starts earning from the subscription instead of from an ad.
  */
-export const setVideoTier = createServerFn({ method: 'POST' })
-  .validator(setVideoTierSchema)
-  .handler(async ({ data }): Promise<{ videoId: string; tierId: string | null }> => {
-    const creatorId = await requireUserId()
-    await connectToDatabase()
+export const updateVideoAccess = createServerFn({ method: 'POST' })
+  .validator(updateVideoAccessSchema)
+  .handler(
+    async ({
+      data,
+    }): Promise<{ videoId: string; visibility: string; tierId: string | null }> => {
+      const creatorId = await requireUserId()
+      await connectToDatabase()
 
-    if (data.tierId) {
-      const tier = await MembershipTierModel.findOne({
-        _id: data.tierId,
-        creatorId,
-        active: true,
-      })
-        .select('_id')
-        .lean()
-      // Rejected as "no longer exists" rather than "not yours": whether another
-      // creator's tier exists is not this caller's business.
-      if (!tier) throw new Error(CHANNEL_ERRORS.tierNotYours)
-    }
+      const tierId = data.visibility === 'subscriber' ? data.tierId : null
 
-    const update = data.tierId
-      ? { requiredTierId: data.tierId, visibility: 'private', adsEnabled: false }
-      : { requiredTierId: null }
+      if (tierId) {
+        const tier = await MembershipTierModel.findOne({
+          _id: tierId,
+          creatorId,
+          active: true,
+        })
+          .select('_id')
+          .lean()
+        // Rejected as "no longer exists" rather than "not yours": whether another
+        // creator's tier exists is not this caller's business.
+        if (!tier) throw new Error(CHANNEL_ERRORS.tierNotYours)
+      }
 
-    const video = await VideoModel.findOneAndUpdate(
-      { _id: data.videoId, uploadedBy: creatorId },
-      { $set: update },
-    )
-    // Does not distinguish "gone" from "not yours", same as `deleteComment`.
-    if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
+      const video = await VideoModel.findOneAndUpdate(
+        { _id: data.videoId, uploadedBy: creatorId },
+        {
+          $set: {
+            visibility: data.visibility,
+            requiredTierId: tierId,
+            adsEnabled: data.visibility === 'public',
+          },
+        },
+      )
+      // Does not distinguish "gone" from "not yours", same as `deleteComment`.
+      if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
-    return { videoId: data.videoId, tierId: data.tierId }
-  })
+      return { videoId: data.videoId, visibility: data.visibility, tierId }
+    },
+  )
