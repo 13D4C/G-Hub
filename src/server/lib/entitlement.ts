@@ -8,7 +8,7 @@ import { INTERACTION_ERRORS } from '../../lib/interaction-errors.ts'
 import { ChannelSubscriptionModel } from '../db/models/channel-subscription.ts'
 import { MembershipTierModel } from '../db/models/membership-tier.ts'
 import { VideoModel } from '../db/models/video.ts'
-import { isEntitled } from './entitlement-status.ts'
+import { isEntitled, tierStanding } from './entitlement-status.ts'
 import { tierUnlocks, type TierRef } from './tier-access.ts'
 
 /**
@@ -20,7 +20,7 @@ import { tierUnlocks, type TierRef } from './tier-access.ts'
  */
 
 // One import site for callers that only need the predicates.
-export { isEntitled, tierUnlocks }
+export { isEntitled, tierStanding, tierUnlocks }
 
 /**
  * What one viewer may do on one channel: whether they are paying at all, and which
