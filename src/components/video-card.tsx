@@ -39,6 +39,43 @@ function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
   )
 }
 
+/**
+ * Where the card's thumbnail and title point.
+ *
+ * A locked card is not a dead end — it is the shop window, so it links to the channel
+ * selling the key. Only a premium video with no channel at all has nowhere to go, and
+ * that one renders inert.
+ *
+ * The channel name is a separate link (see below), so this deliberately wraps only
+ * part of the card: nesting an anchor inside an anchor is invalid HTML and browsers
+ * resolve it by dropping one of them.
+ */
+function CardTarget({
+  video,
+  className,
+  children,
+}: {
+  video: VideoSummary
+  className?: string
+  children: React.ReactNode
+}) {
+  if (video.unlocked) {
+    return (
+      <Link to="/video" search={{ id: video.id }} className={className}>
+        {children}
+      </Link>
+    )
+  }
+  if (video.channel) {
+    return (
+      <Link to="/channel" search={{ id: video.channel.creatorId }} className={className}>
+        {children}
+      </Link>
+    )
+  }
+  return <div className={cn(className, 'cursor-not-allowed')}>{children}</div>
+}
+
 export function VideoCard({
   video,
   variant = 'grid',
@@ -46,19 +83,14 @@ export function VideoCard({
   video: VideoSummary
   variant?: 'grid' | 'list'
 }) {
-  const isPrivate = video.visibility === 'private'
+  const locked = !video.unlocked
   const isGrid = variant === 'grid'
 
   const thumbnail = (
-    <div
-      className={cn(
-        'group relative overflow-hidden bg-slate-900',
-        isGrid ? 'aspect-video w-full' : 'aspect-video w-44 shrink-0 rounded-xl sm:w-52',
-      )}
-    >
-      {video.url ? <VideoThumbnail src={video.url} blurred={isPrivate} /> : null}
+    <>
+      {video.url ? <VideoThumbnail src={video.url} blurred={locked} /> : null}
 
-      {isPrivate ? (
+      {locked ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55">
           <Lock className={isGrid ? 'size-9 text-white/90' : 'size-6 text-white/90'} />
           {isGrid ? (
@@ -80,10 +112,17 @@ export function VideoCard({
               />
             </div>
           </div>
+          {/* Unlocked but still premium: say so, otherwise a subscriber cannot tell
+              what their subscription is actually paying for. */}
+          {video.premium ? (
+            <span className="absolute top-2 left-2 rounded bg-primary/90 px-1.5 py-0.5 text-xs font-medium text-white">
+              Premium
+            </span>
+          ) : null}
           {video.durationSeconds > 0 && (
             <span
               className={cn(
-                'absolute bottom-2 right-2 rounded bg-black/80 font-medium text-white',
+                'absolute right-2 bottom-2 rounded bg-black/80 font-medium text-white',
                 isGrid ? 'px-2 py-1 text-sm' : 'px-1.5 py-0.5 text-xs',
               )}
             >
@@ -92,59 +131,67 @@ export function VideoCard({
           )}
         </>
       )}
-    </div>
+    </>
   )
 
-  const meta = (
-    <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
-      <CardTitle
-        className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
-      >
-        {video.title}
-      </CardTitle>
-      <CardDescription className={cn('line-clamp-2 text-slate-500', isGrid ? 'text-sm' : 'text-xs')}>
-        {isPrivate
-          ? video.channel
-            ? `Subscribe to ${video.channel.name} to watch`
-            : 'Premium video'
-          : video.description || video.channel?.name || 'Public video'}
-      </CardDescription>
-    </div>
-  )
-
-  const cardClassName = cn(
-    'gap-0 overflow-hidden py-0 transition-transform',
-    isGrid ? 'hover:-translate-y-1' : 'flex-row items-start gap-4 rounded-2xl p-3',
-  )
-
-  // A locked card is not a dead end — it is the shop window. It links to the channel
-  // selling the key when there is one, and only falls back to being inert for a
-  // premium video with no channel, which nothing can unlock.
-  const destination =
-    isPrivate && video.channel ? (
-      <Link to="/channel" search={{ id: video.channel.creatorId }}>
-        {thumbnail}
-        {meta}
-      </Link>
-    ) : isPrivate ? null : (
-      <Link to="/video" search={{ id: video.id }}>
-        {thumbnail}
-        {meta}
-      </Link>
-    )
-
-  if (!destination) {
-    return (
-      <Card variant="solid" className={cn(cardClassName, 'cursor-not-allowed opacity-90')}>
-        {thumbnail}
-        {meta}
-      </Card>
-    )
-  }
+  const subtitle = locked
+    ? video.channel
+      ? `Subscribe to ${video.channel.name} to watch`
+      : 'Premium video'
+    : video.description
 
   return (
-    <Card variant="solid" asChild className={cardClassName}>
-      {destination}
+    <Card
+      variant="solid"
+      className={cn(
+        'gap-0 overflow-hidden py-0 transition-transform',
+        isGrid ? 'hover:-translate-y-1' : 'flex-row items-start gap-4 rounded-2xl p-3',
+        locked && !video.channel && 'opacity-90',
+      )}
+    >
+      <CardTarget
+        video={video}
+        className={cn(
+          'group relative block overflow-hidden bg-slate-900',
+          isGrid ? 'aspect-video w-full' : 'aspect-video w-44 shrink-0 rounded-xl sm:w-52',
+        )}
+      >
+        {thumbnail}
+      </CardTarget>
+
+      <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
+        <CardTarget video={video}>
+          <CardTitle
+            className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
+          >
+            {video.title}
+          </CardTitle>
+        </CardTarget>
+
+        {/* The only way to reach a channel you do not already have a locked video
+            from — without it, a creator who publishes nothing premium is
+            unreachable from the catalogue. */}
+        {video.channel ? (
+          <Link
+            to="/channel"
+            search={{ id: video.channel.creatorId }}
+            className={cn(
+              'w-fit font-medium text-slate-500 underline-offset-4 hover:text-slate-900 hover:underline',
+              isGrid ? 'text-sm' : 'text-xs',
+            )}
+          >
+            {video.channel.name}
+          </Link>
+        ) : null}
+
+        {subtitle ? (
+          <CardDescription
+            className={cn('line-clamp-2 text-slate-500', isGrid ? 'text-sm' : 'text-xs')}
+          >
+            {subtitle}
+          </CardDescription>
+        ) : null}
+      </div>
     </Card>
   )
 }

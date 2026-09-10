@@ -8,7 +8,7 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import { uploadObject } from '@/server/storage/seaweed'
-import { requirePlayableVideo } from '@/server/lib/entitlement'
+import { hasActiveChannelSubscription, requirePlayableVideo } from '@/server/lib/entitlement'
 
 /**
  * Server functions only ever run on the server, so `mongoose` never reaches the
@@ -41,39 +41,64 @@ async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
 }
 
 /**
- * The browsable catalogue.
+ * The browsable catalogue, seen through this viewer's entitlement.
  *
- * Premium videos are listed alongside public ones — `<VideoCard>` blurs them and
- * sends the viewer to the channel that sells the key. That is the point of a
- * paywall: you can see what you would be buying. Only `url` is a real secret, and
- * for a premium row it is withheld here; playback goes through `getVideoById`,
- * which re-checks entitlement.
+ * Premium videos are listed alongside public ones — that is the point of a paywall:
+ * you can see what you would be buying. An *unlocked* premium video (the viewer
+ * subscribes, or uploaded it) is a normal playable card, so paying for a channel
+ * makes its videos watchable from here rather than only from the channel page.
+ * `url` is the one real secret and is withheld from a locked row; playback still
+ * goes through `getVideoById`, which re-checks.
  */
 export const listVideos = createServerFn({ method: 'GET' }).handler(async () => {
+  const viewerId = await getUserId()
   await connectToDatabase()
 
   const videos = await VideoModel.find().sort({ createdAt: -1 }).limit(50).lean()
 
   // One `$in` for every creator on the page rather than a lookup per row — the same
   // shape `listComments` uses for author names, and for the same reason.
-  const creatorIds = [...new Set(videos.map((v) => String(v.uploadedBy)).filter(Boolean))]
+  // Filter before stringifying: a video with no `uploadedBy` would otherwise become
+  // the literal string "undefined", which survives `Boolean` and makes the `$in` a
+  // CastError that takes the whole home page down.
+  const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
   const creators = await UserModel.find({ _id: { $in: creatorIds } })
     .select('name channelName')
     .lean()
   const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 
-  return videos.map((v) => ({
-    id: String(v._id),
-    title: v.title,
-    description: v.description,
-    // A premium video's media URL is the one thing the paywall actually protects,
-    // so an unentitled listing must not carry it. `<VideoCard>` renders a locked
-    // placeholder instead of a thumbnail when this is empty.
-    url: v.visibility === 'public' ? v.url : '',
-    durationSeconds: v.durationSeconds,
-    visibility: v.visibility,
-    channel: channelById.get(String(v.uploadedBy)) ?? null,
-  }))
+  // Asked once per *channel* that actually sells something on this page, not once
+  // per row, and through the shared predicate so the rule (a creator is entitled to
+  // their own channel) is not restated here.
+  const premiumCreators = [
+    ...new Set(
+      videos
+        .filter((v) => v.visibility !== 'public' && v.uploadedBy)
+        .map((v) => String(v.uploadedBy)),
+    ),
+  ]
+  const entitlements = await Promise.all(
+    premiumCreators.map(async (id) => [id, await hasActiveChannelSubscription(viewerId, id)] as const),
+  )
+  const entitledTo = new Map(entitlements)
+
+  return videos.map((v) => {
+    const creatorId = v.uploadedBy ? String(v.uploadedBy) : null
+    const premium = v.visibility !== 'public'
+    const unlocked = !premium || (!!creatorId && entitledTo.get(creatorId) === true)
+
+    return {
+      id: String(v._id),
+      title: v.title,
+      description: v.description,
+      url: unlocked ? v.url : '',
+      durationSeconds: v.durationSeconds,
+      premium,
+      /** False when this viewer may not play it, which is what draws the lock. */
+      unlocked,
+      channel: creatorId ? (channelById.get(creatorId) ?? null) : null,
+    }
+  })
 })
 
 const getVideoByIdSchema = z.object({ videoId: z.string() })
