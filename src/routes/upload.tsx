@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { CloudUpload, Globe, Heart, Lock, Share2 } from 'lucide-react'
+import { CloudUpload, EyeOff, Globe, Heart, Share2, Users } from 'lucide-react'
 import { EmptyState } from '@/components/empty-state'
 import { UploadVideoForm } from '@/components/upload-video-form'
 import { Button } from '@/components/ui/button'
@@ -11,7 +11,12 @@ import { describeMutationError, meQueryOptions } from '@/lib/auth'
 import { myMembershipTiersQueryOptions } from '@/lib/membership-tiers'
 import { formatDate, formatDuration } from '@/lib/utils'
 import { myVideosQueryOptions } from '@/lib/videos'
-import { setVideoTier } from '@/server/functions/membership-tiers'
+import {
+  VIDEO_VISIBILITIES,
+  VIDEO_VISIBILITY_LABELS,
+  type VideoVisibility,
+} from '@/lib/video-visibility'
+import { updateVideoAccess } from '@/server/functions/membership-tiers'
 import type { MembershipTierView } from '@/server/functions/membership-tiers'
 import type { MyVideo } from '@/server/functions/videos'
 
@@ -71,7 +76,7 @@ function UploadPage() {
               <thead>
                 <tr className="border-b border-slate-200 text-xs font-semibold tracking-wide text-slate-500 uppercase">
                   <th className="px-5 py-3">Title</th>
-                  <th className="px-5 py-3">Visibility</th>
+                  <th className="px-5 py-3">Who can watch</th>
                   <th className="px-5 py-3">Required tier</th>
                   <th className="px-5 py-3">Duration</th>
                   <th className="px-5 py-3">Uploaded</th>
@@ -84,23 +89,10 @@ function UploadPage() {
                   <tr key={video.id} className="border-b border-slate-100 last:border-b-0">
                     <td className="px-5 py-3 font-medium text-slate-900">{video.title}</td>
                     <td className="px-5 py-3">
-                      <span
-                        className={
-                          video.visibility === 'public'
-                            ? 'inline-flex items-center gap-1.5 text-sky-700'
-                            : 'inline-flex items-center gap-1.5 text-slate-500'
-                        }
-                      >
-                        {video.visibility === 'public' ? (
-                          <Globe className="size-3.5" />
-                        ) : (
-                          <Lock className="size-3.5" />
-                        )}
-                        {video.visibility === 'public' ? 'Public' : 'Private'}
-                      </span>
+                      <VideoAccessControls video={video} tiers={tiers ?? []} field="visibility" />
                     </td>
                     <td className="px-5 py-3">
-                      <VideoTierSelect video={video} tiers={tiers ?? []} />
+                      <VideoAccessControls video={video} tiers={tiers ?? []} field="tier" />
                     </td>
                     <td className="px-5 py-3 text-slate-600">{formatDuration(video.durationSeconds)}</td>
                     <td className="px-5 py-3 text-slate-600">{formatDate(video.createdAt)}</td>
@@ -127,30 +119,88 @@ function UploadPage() {
   )
 }
 
+/** One glyph per audience, widest to narrowest. */
+const VISIBILITY_ICONS: Record<VideoVisibility, typeof Globe> = {
+  public: Globe,
+  subscriber: Users,
+  private: EyeOff,
+}
+
 /**
- * Map one already-uploaded video onto a membership tier — the third acceptance
- * criterion, and the reason gating is not a one-shot decision made at upload time.
+ * Change who can watch one already-uploaded video, and — when that is `subscriber` —
+ * which membership tier it needs. Together these are the third acceptance criterion,
+ * and the reason gating is not a one-shot decision made at upload time.
  *
- * Picking a tier also makes the video premium, so the Visibility cell can change as
- * a result; both queries are invalidated rather than just the tier list.
- *
- * A creator with no tiers still sees the control, disabled, with the reason: an
- * absent control reads as a missing feature, and the fix (add a tier on your channel
- * page) is not something they would guess.
+ * Rendered as two cells of the same row but backed by one mutation, because the two
+ * settings constrain each other: the server clears the tier for anything that is not
+ * `subscriber`, so sending them separately could momentarily describe a video that
+ * is public *and* tier-gated. `field` picks which half of the pair this instance
+ * draws.
  */
-function VideoTierSelect({
+function VideoAccessControls({
   video,
   tiers,
+  field,
 }: {
   video: MyVideo
   tiers: Array<MembershipTierView>
+  field: 'visibility' | 'tier'
 }) {
   const queryClient = useQueryClient()
 
   const save = useMutation({
-    mutationFn: (tierId: string | null) => setVideoTier({ data: { videoId: video.id, tierId } }),
+    mutationFn: (next: { visibility: VideoVisibility; tierId: string | null }) =>
+      updateVideoAccess({ data: { videoId: video.id, ...next } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: myVideosQueryOptions.queryKey }),
   })
+
+  const error = save.isError ? (
+    <span role="alert" className="text-xs text-destructive">
+      {describeMutationError(save.error, 'Could not change who can watch this.')}
+    </span>
+  ) : null
+
+  if (field === 'visibility') {
+    const Icon = VISIBILITY_ICONS[video.visibility]
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="inline-flex items-center gap-1.5">
+          <Icon
+            className={
+              video.visibility === 'public' ? 'size-3.5 text-sky-700' : 'size-3.5 text-slate-500'
+            }
+          />
+          <select
+            aria-label={`Who can watch ${video.title}`}
+            value={video.visibility}
+            disabled={save.isPending}
+            onChange={(e) =>
+              save.mutate({
+                visibility: e.target.value as VideoVisibility,
+                // Carried across so switching away from `subscriber` and back does
+                // not silently drop the tier the creator had already chosen.
+                tierId: video.requiredTierId,
+              })
+            }
+            className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 outline-none focus:border-slate-400"
+          >
+            {VIDEO_VISIBILITIES.map((option) => (
+              <option key={option} value={option}>
+                {VIDEO_VISIBILITY_LABELS[option]}
+              </option>
+            ))}
+          </select>
+        </span>
+        {error}
+      </div>
+    )
+  }
+
+  // A tier only means anything for a `subscriber` video, so the cell says why it is
+  // inert rather than offering a control that would be discarded on save.
+  if (video.visibility !== 'subscriber') {
+    return <span className="text-xs text-slate-400">—</span>
+  }
 
   // The gate can name a tier that has since been archived, and an archived tier is
   // not in this list. Rendering it as an extra option keeps the select showing the
@@ -170,7 +220,7 @@ function VideoTierSelect({
         aria-label={`Required tier for ${video.title}`}
         value={video.requiredTierId ?? ''}
         disabled={save.isPending}
-        onChange={(e) => save.mutate(e.target.value || null)}
+        onChange={(e) => save.mutate({ visibility: 'subscriber', tierId: e.target.value || null })}
         className="rounded-lg border border-slate-200 px-2 py-1 text-sm text-slate-900 outline-none focus:border-slate-400"
       >
         <option value="">Any subscriber</option>
@@ -181,11 +231,7 @@ function VideoTierSelect({
         ))}
         {missingTier ? <option value={missingTier}>Retired tier</option> : null}
       </select>
-      {save.isError ? (
-        <span role="alert" className="text-xs text-destructive">
-          {describeMutationError(save.error, 'Could not change the tier.')}
-        </span>
-      ) : null}
+      {error}
     </div>
   )
 }

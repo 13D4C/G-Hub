@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CloudUpload, Globe, Lock } from 'lucide-react'
+import { CloudUpload, EyeOff, Globe, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { describeMutationError } from '@/lib/auth'
 import { myMembershipTiersQueryOptions } from '@/lib/membership-tiers'
+import {
+  VIDEO_VISIBILITIES,
+  VIDEO_VISIBILITY_HINTS,
+  VIDEO_VISIBILITY_LABELS,
+  type VideoVisibility,
+} from '@/lib/video-visibility'
 import { myVideosQueryOptions } from '@/lib/videos'
 import { createVideo } from '@/server/functions/videos'
+
+/** One glyph per audience, widest to narrowest. */
+const VISIBILITY_ICONS: Record<VideoVisibility, typeof Globe> = {
+  public: Globe,
+  subscriber: Users,
+  private: EyeOff,
+}
 
 export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -15,7 +28,7 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [visibility, setVisibility] = useState<'public' | 'private'>('public')
+  const [visibility, setVisibility] = useState<VideoVisibility>('public')
   /** Empty means "any active subscriber", which is what premium meant before tiers. */
   const [requiredTierId, setRequiredTierId] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -83,9 +96,9 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
     formData.set('title', title)
     formData.set('description', description)
     formData.set('visibility', visibility)
-    // Sent only for a premium upload; the server drops it for a public one anyway,
+    // Sent only for a `subscriber` upload; the server drops it otherwise anyway,
     // but leaving it out keeps the request saying exactly what the form shows.
-    if (visibility === 'private' && requiredTierId) {
+    if (visibility === 'subscriber' && requiredTierId) {
       formData.set('requiredTierId', requiredTierId)
     }
     uploadMutation.mutate(formData)
@@ -170,39 +183,34 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium text-slate-700">Visibility</span>
-        <div className="grid grid-cols-2 gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setVisibility('public')}
-            className={cn(
-              'justify-center gap-2',
-              visibility === 'public' &&
-                'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-50 hover:text-sky-700',
-            )}
-          >
-            <Globe className="size-4" />
-            Public
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setVisibility('private')}
-            className={cn(
-              'justify-center gap-2',
-              visibility === 'private' &&
-                'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-50 hover:text-sky-700',
-            )}
-          >
-            <Lock className="size-4" />
-            Private
-          </Button>
+        <div className="grid grid-cols-3 gap-3">
+          {VIDEO_VISIBILITIES.map((option) => {
+            const Icon = VISIBILITY_ICONS[option]
+            return (
+              <Button
+                key={option}
+                type="button"
+                variant="outline"
+                onClick={() => setVisibility(option)}
+                className={cn(
+                  'justify-center gap-2',
+                  visibility === option &&
+                    'border-sky-400 bg-sky-50 text-sky-700 hover:bg-sky-50 hover:text-sky-700',
+                )}
+              >
+                <Icon className="size-4" />
+                {VIDEO_VISIBILITY_LABELS[option]}
+              </Button>
+            )
+          })}
         </div>
+        <p className="text-xs text-slate-500">{VIDEO_VISIBILITY_HINTS[visibility]}</p>
       </div>
 
-      {/* Only meaningful for a premium upload — a tier on a public video is a rule
-          nothing reads, so the control does not exist for one. */}
-      {visibility === 'private' ? (
+      {/* Only meaningful for a `subscriber` upload — a public video is open to
+          everyone and a private one to nobody, so a tier on either is a rule nothing
+          reads and the control does not exist for them. */}
+      {visibility === 'subscriber' ? (
         <div className="flex flex-col gap-2">
           <label className="text-sm font-medium text-slate-700" htmlFor="requiredTierId">
             Required membership tier

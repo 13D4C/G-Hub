@@ -4,11 +4,12 @@
  * Run: npm run test:channel-gate
  *
  * `scripts/test-entitlement.ts` covers the predicate in isolation; this covers the
- * thing the predicate is *for* — that `requirePlayableVideo` denies a premium video
- * to a stranger and lets the same viewer in once an active subscription row exists,
- * which is the server-side half of "premium content becomes accessible immediately
- * upon successful subscription". No Stripe calls: the row is written directly, the
- * way `syncSubscription` writes it.
+ * thing the predicate is *for* — that `requirePlayableVideo` denies a `subscriber`
+ * video to a stranger and lets the same viewer in once an active subscription row
+ * exists, which is the server-side half of "premium content becomes accessible
+ * immediately upon successful subscription". It also covers the third visibility,
+ * `private`, which no subscription opens. No Stripe calls: the row is written
+ * directly, the way `syncSubscription` writes it.
  *
  * Creates its own throwaway users/videos and deletes them again, so it is safe to
  * run against a dev database.
@@ -59,12 +60,20 @@ async function main() {
   const premium = await VideoModel.create({
     title: `${tag} premium`,
     url: 'http://example.test/premium.mp4',
+    visibility: 'subscriber',
+    uploadedBy: creator._id,
+  })
+  // The third state: the uploader's alone, and not for sale at any price.
+  const hidden = await VideoModel.create({
+    title: `${tag} hidden`,
+    url: 'http://example.test/hidden.mp4',
     visibility: 'private',
     uploadedBy: creator._id,
   })
 
   const freeId = String(free._id)
   const premiumId = String(premium._id)
+  const hiddenId = String(hidden._id)
   const viewerId = String(viewer._id)
   const creatorId = String(creator._id)
 
@@ -78,6 +87,13 @@ async function main() {
 
   // The creator never pays for their own channel.
   assert.equal(await denial(premiumId, creatorId), null, 'creator should watch their own premium video')
+
+  // A private video is the uploader's alone. It reports as *missing* rather than as
+  // locked: there is nothing to sell, so a distinct message would only confirm to a
+  // stranger that it exists.
+  assert.equal(await denial(hiddenId, creatorId), null, 'creator should watch their own private video')
+  assert.equal(await denial(hiddenId, null), INTERACTION_ERRORS.videoNotFound)
+  assert.equal(await denial(hiddenId, viewerId), INTERACTION_ERRORS.videoNotFound)
 
   // A row that exists but has not been paid for does not open the gate — this is the
   // state `startChannelCheckout` writes just before handing off to Stripe.
@@ -102,6 +118,13 @@ async function main() {
   assert.equal(allowed.subscribed, true)
   assert.equal(String(allowed.video._id), premiumId)
 
+  // ...and paying still buys nothing behind the private one.
+  assert.equal(
+    await denial(hiddenId, viewerId),
+    INTERACTION_ERRORS.videoNotFound,
+    'a subscription must not open a private video',
+  )
+
   // The subscription buys this channel, not the whole site.
   const other = await UserModel.create({
     email: `${tag}-other@example.test`,
@@ -112,7 +135,7 @@ async function main() {
   const otherPremium = await VideoModel.create({
     title: `${tag} other premium`,
     url: 'http://example.test/other.mp4',
-    visibility: 'private',
+    visibility: 'subscriber',
     uploadedBy: other._id,
   })
   assert.equal(

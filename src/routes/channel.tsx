@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { Lock, Play, Tv } from 'lucide-react'
+import { EyeOff, Lock, Play, Tv } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '@/components/empty-state'
 import { MembershipTiersEditor } from '@/components/membership-tiers-editor'
@@ -506,7 +506,12 @@ function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribe
           )
         ) : null}
         {video.title}
-        {video.premium ? (
+        {video.visibility === 'private' ? (
+          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
+            <EyeOff className="size-3" aria-hidden />
+            Private
+          </span>
+        ) : video.premium ? (
           <span className="rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
             {video.requiredTierName || 'Premium'}
           </span>
