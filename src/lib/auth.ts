@@ -1,6 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import { isUserFacingAuthError } from '@/lib/auth-errors'
-import { isUserFacingBillingError } from '@/lib/billing-errors'
+import { isUserFacingChannelError } from '@/lib/channel-errors'
 import { isUserFacingInteractionError } from '@/lib/interaction-errors'
 import { isUserFacingVideoError } from '@/lib/video-errors'
 import { me } from '@/server/functions/auth'
@@ -34,9 +34,9 @@ export function describeAuthError(code: string | undefined): string | undefined 
 export function describeMutationError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message.trim() : ''
   return isUserFacingAuthError(message) ||
-    isUserFacingBillingError(message) ||
     isUserFacingInteractionError(message) ||
-    isUserFacingVideoError(message)
+    isUserFacingVideoError(message) ||
+    isUserFacingChannelError(message)
     ? message
     : fallback
 }

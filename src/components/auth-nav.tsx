@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
-import { CreditCard, LogOut } from 'lucide-react'
+import { LogOut, Tv } from 'lucide-react'
 import { meQueryOptions } from '@/lib/auth'
-import { billingStatusQueryOptions } from '@/lib/billing'
 import { logout } from '@/server/functions/auth'
 
 const FALLBACK_AVATAR = '/assets/skibidi.jpg'
@@ -23,8 +22,6 @@ export function AuthNav() {
     onSuccess: async () => {
       setOpen(false)
       await queryClient.invalidateQueries({ queryKey: meQueryOptions.queryKey })
-      // Plan status is per-viewer, so it must not survive a sign-out.
-      await queryClient.invalidateQueries({ queryKey: billingStatusQueryOptions.queryKey })
       await router.navigate({ to: '/' })
     },
   })
@@ -75,15 +72,20 @@ export function AuthNav() {
         >
           <p className="truncate px-2 py-1.5 text-sm font-medium">{user.name || user.email}</p>
           <div className="-mx-1 my-1 h-px bg-border" />
+          {/* The only route to your own channel page, where the subscription price
+              is set — without it a creator can upload premium videos but never
+              price them. */}
           <Link
-            to="/billing"
+            to="/channel"
+            search={{ id: user.id }}
             role="menuitem"
             onClick={() => setOpen(false)}
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent"
           >
-            <CreditCard className="size-4" />
-            Billing
+            <Tv className="size-4" />
+            Your channel
           </Link>
+          <div className="-mx-1 my-1 h-px bg-border" />
           <button
             type="button"
             role="menuitem"

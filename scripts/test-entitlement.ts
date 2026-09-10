@@ -1,40 +1,41 @@
 /**
- * Self-check for the entitlement predicate — the one piece of billing logic that
- * decides whether a viewer gets past the paywall, and the only one testable without
- * a Stripe account or a database.
+ * Self-check for the entitlement predicate — the one rule that decides whether a
+ * paying viewer gets in and a lapsed one does not.
  *
- * Run: node --experimental-strip-types scripts/test-entitlement.ts
+ * Run: npm run test:entitlement
+ *
+ * `isEntitled` lives alone in a module with no imports precisely so this can run
+ * under plain `node --experimental-strip-types`, which resolves neither the `@/`
+ * alias nor Mongoose.
  */
 import assert from 'node:assert/strict'
 import { isEntitled } from '../src/server/lib/entitlement-status.ts'
 
-const now = new Date('2026-09-09T12:00:00Z')
-const future = new Date('2026-10-09T12:00:00Z')
-const past = new Date('2026-08-09T12:00:00Z')
+const now = new Date('2026-01-15T00:00:00Z')
+const future = new Date('2026-02-15T00:00:00Z')
+const past = new Date('2026-01-01T00:00:00Z')
 
-// No plan at all.
+// No subscription row at all: an anonymous or never-subscribed viewer.
 assert.equal(isEntitled(null, now), false)
 
-// A paid, current plan.
+// The two statuses that entitle.
 assert.equal(isEntitled({ status: 'active', currentPeriodEnd: future }, now), true)
 assert.equal(isEntitled({ status: 'trialing', currentPeriodEnd: future }, now), true)
 
-// Cancelled at period end is still paid for until that date — Stripe leaves the
-// status `active` and only the date says it is winding down.
-assert.equal(isEntitled({ status: 'active', currentPeriodEnd: past }, now), false)
-
-// Statuses that must never entitle, even with time left on the clock.
-for (const status of ['past_due', 'unpaid', 'incomplete', 'canceled', 'paused', 'none']) {
+// Everything else does not, however far in the future the period runs.
+for (const status of ['incomplete', 'past_due', 'unpaid', 'canceled', 'paused', 'weird']) {
   assert.equal(isEntitled({ status, currentPeriodEnd: future }, now), false, status)
 }
 
-// A brand-new plan Stripe has not billed yet has no period end; the status carries it.
-// `undefined` is the same case, reached through a `.lean()` read of an older row.
+// Fail-closed backstop: an active row whose paid period has lapsed is not entitled,
+// even if the webhook that should have moved it to `past_due` never arrived.
+assert.equal(isEntitled({ status: 'active', currentPeriodEnd: past }, now), false)
+
+// The boundary itself is exclusive: the instant the period ends, it is over.
+assert.equal(isEntitled({ status: 'active', currentPeriodEnd: now }, now), false)
+
+// Before Stripe has billed a first period there is no end date; the status carries it.
 assert.equal(isEntitled({ status: 'active', currentPeriodEnd: null }, now), true)
 assert.equal(isEntitled({ status: 'active' }, now), true)
-
-// The boundary itself: the period end is exclusive, so the instant it arrives the
-// plan is over. Anything else double-counts the last millisecond.
-assert.equal(isEntitled({ status: 'active', currentPeriodEnd: now }, now), false)
 
 console.log('entitlement: all checks passed')

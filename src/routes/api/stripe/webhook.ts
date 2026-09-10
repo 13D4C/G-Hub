@@ -5,7 +5,7 @@ import { getStripe, getWebhookSecret } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
 /**
- * Stripe's view of a subscription, pushed to us.
+ * Stripe's view of a channel subscription, pushed to us.
  *
  * Run `stripe listen --forward-to localhost:3000/api/stripe/webhook` in development
  * and put the `whsec_...` it prints in STRIPE_WEBHOOK_SECRET.
@@ -15,6 +15,11 @@ import { syncSubscription } from '@/server/lib/subscription-sync'
  * re-read the subscription from Stripe (see `syncSubscription`). Invoice events are
  * deliberately not handled: a failed payment moves the subscription's status, which
  * arrives here as `customer.subscription.updated` anyway.
+ *
+ * This is the durable path. `confirmChannelCheckout` runs the same sync when the
+ * viewer lands back from Checkout so the unlock is immediate, but a viewer who never
+ * comes back — and every later renewal, cancellation and failed payment — arrives
+ * only here.
  */
 
 /** The subscription an event concerns, or null when it concerns none. */
