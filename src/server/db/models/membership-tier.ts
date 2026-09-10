@@ -28,9 +28,8 @@ const membershipTierSchema = new mongoose.Schema(
     description: { type: String, default: '', maxlength: TIER_DESCRIPTION_MAX_LENGTH },
     /**
      * Monthly price in the minor unit of `currency` (4900 = $49.00). Floored at
-     * Stripe's minimum chargeable amount, same as `user.subscriptionPriceCents`:
-     * below it Checkout rejects the session and the viewer, not the creator, is the
-     * one who sees the error.
+     * Stripe's minimum chargeable amount: below it Checkout rejects the session and
+     * the viewer, not the creator, is the one who sees the error.
      */
     priceCents: { type: Number, required: true, min: 50 },
     currency: { type: String, default: 'usd', lowercase: true, trim: true },

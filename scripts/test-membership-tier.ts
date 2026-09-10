@@ -64,7 +64,6 @@ async function main() {
     email: `${tag}-creator@example.test`,
     googleId: `${tag}-creator`,
     channelName: 'Tier Test Channel',
-    subscriptionPriceCents: 499,
   })
   const viewer = await UserModel.create({
     email: `${tag}-viewer@example.test`,

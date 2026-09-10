@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { EyeOff, Lock, Play, Tv } from 'lucide-react'
@@ -57,10 +57,10 @@ function ChannelPage() {
     queryClient.invalidateQueries({ queryKey: channelKeys.detailPrefix(search.id) })
 
   // The tier is the argument, not the channel: one button per rung, all going
-  // through the same Checkout. `null` buys the flat channel subscription, which is
-  // still all a creator without a ladder has to sell.
+  // through the same Checkout. A tier is the only thing a channel sells, so there is
+  // no unspecified "subscribe to the channel" purchase to fall back to.
   const subscribe = useMutation({
-    mutationFn: (tierId: string | null) =>
+    mutationFn: (tierId: string) =>
       startChannelCheckout({ data: { creatorId: search.id, tierId } }),
     // A full page assignment, not a router navigation: Checkout is Stripe's origin.
     onSuccess: (result) => {
@@ -106,12 +106,9 @@ function ChannelPage() {
     return <EmptyState icon={Tv} message="Loading channel…" />
   }
 
-  const priced = channel.priceCents > 0
-  const price = formatPrice(channel.priceCents, channel.currency)
   const premiumCount = channel.videos.filter((v) => v.premium).length
-  // A channel with a ladder sells the rungs; the flat price is only the fallback for
-  // one that has not built one. Never both at once, or a viewer has two prices for
-  // overlapping things and no way to tell which they are buying.
+  // Membership tiers are the whole of what a channel sells. No tiers means nothing
+  // is on offer yet, however many subscriber-only videos are sitting behind it.
   const hasTiers = channel.tiers.length > 0
 
   const errorMessage = subscribe.isError
@@ -150,16 +147,14 @@ function ChannelPage() {
           </p>
         ) : hasTiers ? (
           <p className="text-sm text-slate-500">
-            Choose a membership tier below to unlock this channel's premium videos.
-          </p>
-        ) : priced ? (
-          <p className="text-sm text-slate-500">
-            <span className="text-2xl font-semibold text-slate-900">{price}</span> / month —
-            unlocks {premiumCount || 'all'} premium video{premiumCount === 1 ? '' : 's'} on this
-            channel.
+            {premiumCount > 0
+              ? `Choose a membership tier below to unlock this channel's ${premiumCount} subscriber-only video${premiumCount === 1 ? '' : 's'}.`
+              : 'Choose a membership tier below to support this channel. Nothing is subscriber-only yet.'}
           </p>
         ) : (
-          <p className="text-sm text-slate-500">This channel is not accepting subscribers yet.</p>
+          <p className="text-sm text-slate-500">
+            This channel has no membership tiers yet, so there is nothing to subscribe to.
+          </p>
         )}
 
         {/* Stripe redirects back mid-payment; say so rather than showing a bare
@@ -186,32 +181,18 @@ function ChannelPage() {
           </p>
         ) : null}
 
-        {channel.isOwner ? null : (
+        {/* Only the subscriber's own billing link lives up here now. Buying is a
+            per-tier act, so its buttons belong on the tier cards below. */}
+        {channel.isOwner || !channel.subscribed ? null : (
           <div>
-            {!viewerId ? (
-              <Button asChild className="rounded-full">
-                <Link to="/login" search={{ redirect: `/channel?id=${channel.creatorId}` }}>
-                  Sign in to subscribe{!hasTiers && priced ? ` — ${price}/month` : ''}
-                </Link>
-              </Button>
-            ) : channel.subscribed ? (
-              <Button
-                variant="outline"
-                className="rounded-full"
-                onClick={() => manage.mutate()}
-                disabled={manage.isPending}
-              >
-                {manage.isPending ? 'Opening…' : 'Manage subscription'}
-              </Button>
-            ) : hasTiers ? null : (
-              <Button
-                className="rounded-full"
-                onClick={() => subscribe.mutate(null)}
-                disabled={!priced || subscribe.isPending || confirm.isPending}
-              >
-                {subscribe.isPending ? 'Redirecting…' : `Subscribe — ${price}/month`}
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              className="rounded-full"
+              onClick={() => manage.mutate()}
+              disabled={manage.isPending}
+            >
+              {manage.isPending ? 'Opening…' : 'Manage subscription'}
+            </Button>
           </div>
         )}
       </Card>
@@ -259,9 +240,12 @@ function ChannelPage() {
 }
 
 /**
- * The creator's own controls. A channel cannot sell anything until it has a price,
- * and this is the only place to set one — so it lives on the channel page rather
- * than behind a separate settings route.
+ * The creator's own profile controls: what the channel is called and what it says
+ * about itself.
+ *
+ * No price here. A channel cannot sell anything until it has a membership tier, and
+ * `MembershipTiersEditor` below is the only place to make one — a second price field
+ * is how a channel ends up quoting two figures for the same access.
  */
 function ChannelSettings({
   channel,
@@ -270,16 +254,9 @@ function ChannelSettings({
   channel: ChannelView
   onSaved: () => Promise<void>
 }) {
-  // Edited as a decimal string so the field behaves like a price; converted to minor
-  // units at submit, which is the only unit the server and Stripe ever see.
-  const [price, setPrice] = useState((channel.priceCents / 100).toFixed(2))
-
   const save = useMutation({
-    mutationFn: (data: {
-      channelName: string
-      channelDescription: string
-      subscriptionPriceCents: number
-    }) => updateChannelSettings({ data }),
+    mutationFn: (data: { channelName: string; channelDescription: string }) =>
+      updateChannelSettings({ data }),
     onSuccess: onSaved,
   })
 
@@ -289,7 +266,6 @@ function ChannelSettings({
     save.mutate({
       channelName: String(form.get('channelName') ?? '').trim(),
       channelDescription: String(form.get('channelDescription') ?? '').trim(),
-      subscriptionPriceCents: Math.round(Number(price || 0) * 100),
     })
   }
 
@@ -300,9 +276,9 @@ function ChannelSettings({
           Your channel
         </h2>
         <p className="text-sm text-slate-500">
-          {channel.priceCents > 0
-            ? 'Viewers pay this every month to unlock your premium videos.'
-            : 'Set a price above $0.50 to start selling access to your premium videos.'}
+          {channel.tiers.length > 0
+            ? 'How your channel introduces itself. Pricing lives in your membership tiers below.'
+            : 'How your channel introduces itself. Add a membership tier below to start selling access.'}
         </p>
       </div>
 
@@ -328,23 +304,6 @@ function ChannelSettings({
             rows={3}
             placeholder="What subscribers get."
           />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="price">Monthly price (USD)</Label>
-          <Input
-            id="price"
-            name="price"
-            type="number"
-            min="0"
-            step="0.01"
-            value={price}
-            onChange={(event) => setPrice(event.target.value)}
-            className="max-w-40"
-          />
-          <p className="text-xs text-slate-500">
-            0 stops new subscriptions. Existing subscribers keep the price they signed up at.
-          </p>
         </div>
 
         {save.isError ? (
