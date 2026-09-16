@@ -23,7 +23,9 @@
     "test:ppv-gate": "node --env-file=.env --experimental-strip-types scripts/test-ppv-gate.ts",
     "test:membership-tier": "node --env-file=.env --experimental-strip-types scripts/test-membership-tier.ts",
     "test:tips": "node --experimental-strip-types scripts/test-tips.ts",
-    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts"
+    "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts",
+    "test:video-unlock": "node --experimental-strip-types scripts/test-video-unlock.ts",
+    "test:feed-ranking": "node --experimental-strip-types scripts/test-feed-ranking.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
