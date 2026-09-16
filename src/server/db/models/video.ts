@@ -76,8 +76,10 @@ const videoSchema = new mongoose.Schema(
     // Incremented once per successful `getVideoById`, which is the only path that
     // hands out a playable url. Anonymous like shares, so no per-viewer document.
     //
-    // ponytail: counts loads, not unique viewers — a reload counts again. Add a
-    // per-(viewer, video, day) collection if the number ever has to mean people.
+    // Caveat: counts loads, not unique viewers — a reload counts again. `videoview`
+    // now records the per-(viewer, video) pair, but for feed affinity rather than to
+    // correct this number, and it expires after 90 days — so it is not a source this
+    // could be recomputed from. Making this mean people still needs its own record.
     viewCount: { type: Number, default: 0 },
     // Incremented by `recordShare`. Shares are anonymous, so unlike likes there is no
     // per-viewer document to store and no per-viewer state to render.
@@ -85,6 +87,30 @@ const videoSchema = new mongoose.Schema(
   },
   { timestamps: true },
 )
+
+// Both indexes must stay above `mongoose.model(...)`: indexes declared after the
+// model is compiled are silently dropped. Same warning as on `videolike`.
+
+/**
+ * A channel's videos, newest first — the personalized feed's subscribed-uploads
+ * query, and also what `listMyVideos` and the channel page have always asked for.
+ * Those two sort `{ createdAt: -1 }` within a single `uploadedBy`, which the
+ * field-level index above cannot serve, so both have been paying for an in-memory
+ * sort until now.
+ *
+ * This supersedes the standalone `uploadedBy` index, which is deliberately left in
+ * place: dropping an index is a separate decision with its own deploy ordering, and
+ * a redundant index costs writes, not correctness.
+ */
+videoSchema.index({ uploadedBy: 1, createdAt: -1 })
+
+/**
+ * The catalogue's own order. `listVideos` has always sorted on `createdAt` with
+ * nothing to serve it, which is an in-memory sort of the whole collection — not
+ * merely slow, but a hard failure once the sorted set passes Mongo's 32MB limit.
+ * The feed's recency window reads through the same index.
+ */
+videoSchema.index({ createdAt: -1 })
 
 export type Video = InferSchemaType<typeof videoSchema> & { _id: mongoose.Types.ObjectId }
 
