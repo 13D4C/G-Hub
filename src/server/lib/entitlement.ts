@@ -9,7 +9,7 @@ import { ChannelSubscriptionModel } from '../db/models/channel-subscription.ts'
 import { MembershipTierModel } from '../db/models/membership-tier.ts'
 import { VideoModel } from '../db/models/video.ts'
 import { VideoPurchaseModel } from '../db/models/video-purchase.ts'
-import { isEntitled, tierStanding } from './entitlement-status.ts'
+import { ENTITLING_STATUSES, isEntitled, tierStanding } from './entitlement-status.ts'
 import { tierUnlocks, type TierRef } from './tier-access.ts'
 
 /**
@@ -61,6 +61,51 @@ export async function getChannelAccess(
   if (!isEntitled(sub ?? null)) return NO_ACCESS
 
   return { subscribed: true, tierId: sub?.tierId ? String(sub.tierId) : null, isOwner: false }
+}
+
+/** One channel a viewer pays for, and the rung they pay for it at. */
+export type SubscribedChannel = {
+  creatorId: string
+  /** The tier held, or null for a channel-level subscription. */
+  tierId: string | null
+}
+
+/**
+ * Every channel this viewer currently pays for, in one query — the inverse of
+ * `getChannelAccess`, which answers the same question one channel at a time.
+ *
+ * The personalized feed needs this to know whose uploads to go looking for, and it is
+ * the query that did not exist before: every other read of `channelsubscription` is
+ * keyed by a specific `(subscriberId, creatorId)` pair or by `creatorId` alone. The
+ * unique `{ subscriberId: 1, creatorId: 1 }` index covers this as a prefix scan, so
+ * it needs no index of its own.
+ *
+ * The `$in` on status only narrows what comes back; `isEntitled` still decides, so an
+ * `active` row whose period has quietly expired is rejected here exactly as it would
+ * be by `getChannelAccess`. Anonymous viewers pay nobody, and answering that costs no
+ * query.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function loadSubscribedCreatorIds(
+  viewerId: string | null,
+  now?: Date,
+): Promise<SubscribedChannel[]> {
+  if (!viewerId) return []
+
+  const rows = await ChannelSubscriptionModel.find({
+    subscriberId: viewerId,
+    status: { $in: [...ENTITLING_STATUSES] },
+  })
+    .select('creatorId tierId status currentPeriodEnd')
+    .lean()
+
+  return rows
+    .filter((row) => isEntitled(row, now))
+    .map((row) => ({
+      creatorId: String(row.creatorId),
+      tierId: row.tierId ? String(row.tierId) : null,
+    }))
 }
 
 /**

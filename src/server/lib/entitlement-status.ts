@@ -6,8 +6,18 @@
  * --experimental-strip-types`, which resolves neither the alias nor Mongoose.
  */
 
-/** Stripe statuses that entitle a viewer. Everything else — `past_due`, `unpaid`, `incomplete`, `canceled`, `paused` — does not. */
-const ENTITLING_STATUSES = new Set(['active', 'trialing'])
+/**
+ * Stripe statuses that entitle a viewer. Everything else — `past_due`, `unpaid`,
+ * `incomplete`, `canceled`, `paused` — does not.
+ *
+ * Exported so a query that wants to *narrow* on status can use the same list rather
+ * than restating it and drifting from the predicate. `isEntitled` remains the
+ * decision: a `$in` on this can only ever be a hint that skips rows the predicate
+ * would reject anyway, never a substitute for the `currentPeriodEnd` check below.
+ */
+export const ENTITLING_STATUSES = ['active', 'trialing'] as const
+
+const ENTITLING_STATUS_SET: ReadonlySet<string> = new Set(ENTITLING_STATUSES)
 
 export type EntitlementState = {
   status: string
@@ -28,7 +38,7 @@ export type EntitlementState = {
  * right way round to be wrong.
  */
 export function isEntitled(sub: EntitlementState | null, now: Date = new Date()): boolean {
-  if (!sub || !ENTITLING_STATUSES.has(sub.status)) return false
+  if (!sub || !ENTITLING_STATUS_SET.has(sub.status)) return false
   // Absent before Stripe has billed the first period; the status alone carries it then.
   return !sub.currentPeriodEnd || sub.currentPeriodEnd.getTime() > now.getTime()
 }

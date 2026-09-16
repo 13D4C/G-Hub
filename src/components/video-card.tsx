@@ -4,22 +4,8 @@ import { Lock, Play } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
 import { formatPrice } from '@/lib/channels'
-import type { VideoVisibility } from '@/lib/video-visibility'
-
-export type VideoCardVideo = {
-  id: string
-  title: string
-  description: string
-  url?: string
-  durationSeconds: number
-  visibility: VideoVisibility
-  premium: boolean
-  payPerView: boolean
-  unlocked: boolean
-  priceCents: number | null
-  requiredTierName?: string
-  channel?: { creatorId: string; name: string; currency: string } | null
-}
+import { feedReasonLabel } from '@/lib/feed-reason'
+import type { VideoSummary } from '@/lib/video-summary-types'
 
 function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -75,7 +61,7 @@ function CardTarget({
   children,
   hideChannelLink,
 }: {
-  video: VideoCardVideo
+  video: VideoSummary
   className?: string
   children: React.ReactNode
   hideChannelLink?: boolean
@@ -102,12 +88,13 @@ export function VideoCard({
   variant = 'grid',
   hideChannelLink = false,
 }: {
-  video: VideoCardVideo
+  video: VideoSummary
   variant?: 'grid' | 'list'
   hideChannelLink?: boolean
 }) {
   const locked = !video.unlocked
   const isGrid = variant === 'grid'
+  const reasonLabel = video.reason ? feedReasonLabel(video.reason, video.channel?.name) : ''
   // The price, once, for the overlay and the subtitle. Null when this is not a
   // pay-per-view card, or when one somehow has no price to quote.
   const price =
@@ -212,6 +199,17 @@ export function VideoCard({
       </CardTarget>
 
       <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
+        {reasonLabel ? (
+          <span
+            className={cn(
+              'text-primary/80 font-medium tracking-wide uppercase',
+              isGrid ? 'text-xs' : 'text-[11px]',
+            )}
+          >
+            {reasonLabel}
+          </span>
+        ) : null}
+
         <CardTarget video={video} hideChannelLink={hideChannelLink}>
           <CardTitle
             className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
