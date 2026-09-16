@@ -12,40 +12,21 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import { uploadObject } from '@/server/storage/seaweed'
-import {
-  getChannelAccess,
-  loadPurchasedVideoIds,
-  loadTierRanks,
-  requirePlayableVideo,
-  tierRefOf,
-  tierUnlocks,
-  visibleToViewerFilter,
-} from '@/server/lib/entitlement'
+import { requirePlayableVideo, visibleToViewerFilter } from '@/server/lib/entitlement'
+import { channelFrom, summarizeVideosForViewer } from '@/server/lib/video-summary'
+import type { VideoChannel } from '@/lib/video-summary-types'
 
 /**
  * Server functions only ever run on the server, so `mongoose` never reaches the
  * client bundle. Call these from a route loader or a React Query hook.
  */
 
-export type VideoChannel = {
-  creatorId: string
-  name: string
-  /** What this creator prices in, so the tip dialog offers the right symbol. */
-  currency: string
-}
-
-function channelFrom(creator: {
-  _id: unknown
-  name?: string
-  channelName?: string
-  channelCurrency?: string
-}): VideoChannel {
-  return {
-    creatorId: String(creator._id),
-    name: creator.channelName || creator.name || 'Untitled channel',
-    currency: creator.channelCurrency || 'usd',
-  }
-}
+/**
+ * Re-exported so the components that render a byline keep importing it from here,
+ * where it was defined until the catalogue row shape moved to `src/lib/` to stop the
+ * card deriving its props from this module's return types.
+ */
+export type { VideoChannel }
 
 /**
  * The channel a video belongs to, or null for videos uploaded before channels
@@ -99,89 +80,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
     .limit(50)
     .lean()
 
-  // One `$in` for every creator on the page rather than a lookup per row — the same
-  // shape `listComments` uses for author names, and for the same reason.
-  // Filter before stringifying: a video with no `uploadedBy` would otherwise become
-  // the literal string "undefined", which survives `Boolean` and makes the `$in` a
-  // CastError that takes the whole home page down.
-  const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
-  const creators = await UserModel.find({ _id: { $in: creatorIds } })
-    .select('name channelName channelCurrency')
-    .lean()
-  const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
-
-  // Asked once per *channel* that actually sells something on this page, not once
-  // per row, and through the shared helper so the rule (a creator is entitled to
-  // their own channel) is not restated here.
-  const premiumCreators = [
-    ...new Set(
-      videos
-        .filter((v) => v.visibility === 'subscriber' && v.uploadedBy)
-        .map((v) => String(v.uploadedBy)),
-    ),
-  ]
-  const accessEntries = await Promise.all(
-    premiumCreators.map(async (id) => [id, await getChannelAccess(viewerId, id)] as const),
-  )
-  const accessTo = new Map(accessEntries)
-
-  // Every tier this page has to compare — the ones the viewer holds and the ones the
-  // rows demand — resolved in one query rather than two per premium row.
-  const ranks = await loadTierRanks([
-    ...accessEntries.map(([, access]) => access.tierId),
-    ...videos.map((v) => v.requiredTierId),
-  ])
-
-  // And every pay-per-view row on the page in one more query, for the same reason.
-  // Deliberately not folded into `accessTo`: `getChannelAccess` is a query per
-  // channel and its answer is irrelevant here, since a purchase is per video and
-  // ownership is a string compare.
-  const purchasedIds = await loadPurchasedVideoIds(
-    viewerId,
-    videos.filter((v) => v.visibility === 'buyer').map((v) => v._id),
-  )
-
-  return videos.map((v) => {
-    const creatorId = v.uploadedBy ? String(v.uploadedBy) : null
-    const visibility = v.visibility as VideoVisibility
-    const premium = visibility === 'subscriber'
-    const forSale = visibility === 'buyer'
-    const access = creatorId ? accessTo.get(creatorId) : undefined
-    // Two rules, matching the two arms of `requirePlayableVideo`:
-    //
-    // - `buyer`: bought it, or uploaded it. Nothing else opens it, and it needs its
-    //   own branch rather than falling into the tier rule below — that rule starts
-    //   with `!premium`, which is true of every non-`subscriber` video and would
-    //   hand this one out to everybody.
-    // - `subscriber`: subscribed at all, and then high enough on the ladder.
-    //
-    // A `private` row only survived the query for its owner, so it is always
-    // unlocked by the time it gets here.
-    const unlocked = forSale
-      ? !!viewerId && (creatorId === viewerId || purchasedIds.has(String(v._id)))
-      : !premium ||
-        (!!access &&
-          access.subscribed &&
-          (access.isOwner ||
-            tierUnlocks(tierRefOf(access.tierId, ranks), tierRefOf(v.requiredTierId, ranks))))
-
-    return {
-      id: String(v._id),
-      title: v.title,
-      description: v.description,
-      url: unlocked ? v.url : '',
-      durationSeconds: v.durationSeconds,
-      visibility,
-      premium,
-      /** True for `visibility: 'buyer'` — sold once, per video, and kept. */
-      payPerView: forSale,
-      /** What it costs, for the price on a locked card. Null when it is not for sale. */
-      priceCents: forSale ? (v.priceCents ?? null) : null,
-      /** False when this viewer may not play it, which is what draws the lock. */
-      unlocked,
-      channel: creatorId ? (channelById.get(creatorId) ?? null) : null,
-    }
-  })
+  return summarizeVideosForViewer(videos, viewerId)
 })
 
 const getVideoByIdSchema = z.object({ videoId: z.string() })

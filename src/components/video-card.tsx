@@ -4,9 +4,7 @@ import { Lock, Play } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
 import { formatPrice } from '@/lib/channels'
-import type { listVideos } from '@/server/functions/videos'
-
-type VideoSummary = Awaited<ReturnType<typeof listVideos>>[number]
+import type { VideoSummary } from '@/lib/video-summary-types'
 
 function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null)
