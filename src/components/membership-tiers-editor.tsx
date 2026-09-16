@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -90,18 +89,13 @@ export function MembershipTiersEditor({
   const [adding, setAdding] = useState(false)
 
   return (
-    <Card className="flex flex-col gap-4 p-6">
-      <div className="flex flex-col gap-1">
-        <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
-          Membership tiers
-        </h2>
-        <p className="text-sm text-slate-500">
-          Sell more than one level of access — Silver, Gold, VIP. A higher level
-          unlocks everything below it, so a Gold subscriber can watch Silver videos
-          too. Set which tier a video needs from{' '}
-          <span className="font-medium text-slate-600">Your videos</span>.
-        </p>
-      </div>
+    <div className="flex flex-col gap-4">
+      <p className="text-sm text-slate-500">
+        Sell more than one level of access — Silver, Gold, VIP. A higher level
+        unlocks everything below it, so a Gold subscriber can watch Silver videos
+        too. Set which tier a video needs from{' '}
+        <span className="font-medium text-slate-600">Your videos</span>.
+      </p>
 
       {tiers.length === 0 ? (
         <p className="text-sm text-slate-500">
@@ -145,7 +139,7 @@ export function MembershipTiersEditor({
             : 'Add a tier'}
         </Button>
       )}
-    </Card>
+    </div>
   )
 }
 

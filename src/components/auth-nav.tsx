@@ -5,7 +5,7 @@ import { BarChart3, LogOut, Tv } from 'lucide-react'
 import { meQueryOptions } from '@/lib/auth'
 import { logout } from '@/server/functions/auth'
 
-const FALLBACK_AVATAR = '/assets/skibidi.jpg'
+export const FALLBACK_AVATAR = '/assets/skibidi.jpg'
 
 const avatarClassName =
   'block size-9 shrink-0 overflow-hidden rounded-full ring-2 ring-white/70 transition hover:ring-primary'

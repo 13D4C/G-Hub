@@ -1,13 +1,23 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { EyeOff, Lock, Play, Ticket, Tv } from 'lucide-react'
+import { Layers, Pencil, Tv } from 'lucide-react'
 import { z } from 'zod'
+import { FALLBACK_AVATAR } from '@/components/auth-nav'
 import { EmptyState } from '@/components/empty-state'
 import { MembershipTiersEditor } from '@/components/membership-tiers-editor'
 import { TipButton, TipNotice } from '@/components/tip-button'
+import { VideoCard } from '@/components/video-card'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -20,7 +30,7 @@ import {
   startChannelCheckout,
   updateChannelSettings,
 } from '@/server/functions/channels'
-import type { ChannelVideo, ChannelView } from '@/server/functions/channels'
+import type { ChannelView } from '@/server/functions/channels'
 import { describeTierAccess } from '@/lib/membership-tiers'
 import type { MembershipTierView } from '@/server/functions/membership-tiers'
 
@@ -128,10 +138,18 @@ function ChannelPage() {
 
   return (
     <Card variant="glass" className="flex flex-col gap-6 p-6">
-      <Card className="flex flex-col gap-4 p-6">
-        <div className="flex flex-col gap-1">
-          <CardTitle className="font-display text-2xl text-slate-900">{channel.name}</CardTitle>
-          <CardDescription className="text-slate-500">
+      <Card className="flex flex-col items-center gap-4 p-8 text-center sm:p-10">
+        <img
+          src={channel.avatarUrl || FALLBACK_AVATAR}
+          alt=""
+          className="size-28 shrink-0 rounded-full object-cover ring-4 ring-white shadow-lg sm:size-32"
+        />
+
+        <div className="flex flex-col items-center gap-1">
+          <CardTitle className="font-display text-2xl text-slate-900 sm:text-3xl">
+            {channel.name}
+          </CardTitle>
+          <CardDescription className="max-w-xl text-slate-500">
             {channel.description ||
               `${channel.videos.length} video${channel.videos.length === 1 ? '' : 's'}${
                 premiumCount ? `, ${premiumCount} premium` : ''
@@ -201,34 +219,45 @@ function ChannelPage() {
           </p>
         ) : null}
 
-        {channel.isOwner ? null : (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Buying is a per-tier act, so the Subscribe buttons live on the tier
-                cards below; only the subscriber's own billing link belongs here. */}
-            {channel.subscribed ? (
-              <Button
-                variant="outline"
-                className="rounded-full"
-                onClick={() => manage.mutate()}
-                disabled={manage.isPending}
-              >
-                {manage.isPending ? 'Opening…' : 'Manage subscription'}
-              </Button>
-            ) : null}
-
-            {/* Tipping needs no subscription and no tier — it is open even on a
-                channel that sells nothing. Signed-out viewers get their sign-in
-                link on the tier cards, so this stays out of their way. */}
-            {viewerId ? (
-              <TipButton
-                creatorId={channel.creatorId}
-                creatorName={channel.name}
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {channel.isOwner ? (
+            <>
+              <EditChannelDialog channel={channel} onSaved={refreshChannel} />
+              <MembershipTiersDialog
+                tiers={channel.tiers}
                 currency={channel.currency}
-                redirect={`/channel?id=${channel.creatorId}`}
+                onChanged={refreshChannel}
               />
-            ) : null}
-          </div>
-        )}
+            </>
+          ) : (
+            <>
+              {/* Buying is a per-tier act, so the Subscribe buttons live on the tier
+                  cards below; only the subscriber's own billing link belongs here. */}
+              {channel.subscribed ? (
+                <Button
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => manage.mutate()}
+                  disabled={manage.isPending}
+                >
+                  {manage.isPending ? 'Opening…' : 'Manage subscription'}
+                </Button>
+              ) : null}
+
+              {/* Tipping needs no subscription and no tier — it is open even on a
+                  channel that sells nothing. Signed-out viewers get their sign-in
+                  link on the tier cards, so this stays out of their way. */}
+              {viewerId ? (
+                <TipButton
+                  creatorId={channel.creatorId}
+                  creatorName={channel.name}
+                  currency={channel.currency}
+                  redirect={`/channel?id=${channel.creatorId}`}
+                />
+              ) : null}
+            </>
+          )}
+        </div>
       </Card>
 
       {/* The ladder itself, for anyone who is not its owner — including signed-out
@@ -242,17 +271,6 @@ function ChannelPage() {
         />
       ) : null}
 
-      {channel.isOwner ? (
-        <>
-          <ChannelSettings channel={channel} onSaved={refreshChannel} />
-          <MembershipTiersEditor
-            tiers={channel.tiers}
-            currency={channel.currency}
-            onChanged={refreshChannel}
-          />
-        </>
-      ) : null}
-
       <Card className="flex flex-col gap-4 p-6">
         <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
           Videos
@@ -260,42 +278,40 @@ function ChannelPage() {
         {channel.videos.length === 0 ? (
           <EmptyState icon={Tv} message="This channel has no videos yet." />
         ) : (
-          <ul className="flex flex-col gap-2">
+          <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             {channel.videos.map((video) => (
-              <li key={video.id}>
-                <ChannelVideoRow
-                  video={video}
-                  subscribed={channel.subscribed}
-                  currency={channel.currency}
-                />
-              </li>
+              <VideoCard
+                key={video.id}
+                hideChannelLink
+                video={{
+                  ...video,
+                  channel: { creatorId: channel.creatorId, name: channel.name, currency: channel.currency },
+                }}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </Card>
     </Card>
   )
 }
 
-/**
- * The creator's own profile controls: what the channel is called and what it says
- * about itself.
- *
- * No price here. A channel cannot sell anything until it has a membership tier, and
- * `MembershipTiersEditor` below is the only place to make one — a second price field
- * is how a channel ends up quoting two figures for the same access.
- */
-function ChannelSettings({
+function EditChannelDialog({
   channel,
   onSaved,
 }: {
   channel: ChannelView
   onSaved: () => Promise<void>
 }) {
+  const [open, setOpen] = useState(false)
+
   const save = useMutation({
     mutationFn: (data: { channelName: string; channelDescription: string }) =>
       updateChannelSettings({ data }),
-    onSuccess: onSaved,
+    onSuccess: async () => {
+      await onSaved()
+      setOpen(false)
+    },
   })
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -308,58 +324,90 @@ function ChannelSettings({
   }
 
   return (
-    <Card className="flex flex-col gap-4 p-6">
-      <div className="flex flex-col gap-1">
-        <h2 className="font-display text-sm font-semibold tracking-wide text-slate-500 uppercase">
-          Your channel
-        </h2>
-        <p className="text-sm text-slate-500">
-          {channel.tiers.length > 0
-            ? 'How your channel introduces itself. Pricing lives in your membership tiers below.'
-            : 'How your channel introduces itself. Add a membership tier below to start selling access.'}
-        </p>
-      </div>
-
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="channelName">Channel name</Label>
-          <Input
-            id="channelName"
-            name="channelName"
-            defaultValue={channel.name}
-            maxLength={80}
-            placeholder="My channel"
-          />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="channelDescription">Description</Label>
-          <Textarea
-            id="channelDescription"
-            name="channelDescription"
-            defaultValue={channel.description}
-            maxLength={500}
-            rows={3}
-            placeholder="What subscribers get."
-          />
-        </div>
-
-        {save.isError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {describeMutationError(save.error, 'Could not save your channel. Please try again.')}
-          </p>
-        ) : null}
-        {save.isSuccess ? (
-          <p role="status" className="text-sm text-primary">
-            Saved.
-          </p>
-        ) : null}
-
-        <Button type="submit" className="w-fit rounded-full" disabled={save.isPending}>
-          {save.isPending ? 'Saving…' : 'Save channel'}
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2 rounded-full">
+          <Pencil className="size-4" />
+          Edit channel
         </Button>
-      </form>
-    </Card>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit your channel</DialogTitle>
+          <DialogDescription>
+            {channel.tiers.length > 0
+              ? 'How your channel introduces itself. Pricing lives in your membership tiers.'
+              : 'How your channel introduces itself. Add a membership tier to start selling access.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="channelName">Channel name</Label>
+            <Input
+              id="channelName"
+              name="channelName"
+              defaultValue={channel.name}
+              maxLength={80}
+              placeholder="My channel"
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="channelDescription">Description</Label>
+            <Textarea
+              id="channelDescription"
+              name="channelDescription"
+              defaultValue={channel.description}
+              maxLength={500}
+              rows={3}
+              placeholder="What subscribers get."
+            />
+          </div>
+
+          {save.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {describeMutationError(save.error, 'Could not save your channel. Please try again.')}
+            </p>
+          ) : null}
+
+          <Button type="submit" className="w-fit rounded-full" disabled={save.isPending}>
+            {save.isPending ? 'Saving…' : 'Save channel'}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function MembershipTiersDialog({
+  tiers,
+  currency,
+  onChanged,
+}: {
+  tiers: Array<MembershipTierView>
+  currency: string
+  onChanged: () => Promise<void>
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2 rounded-full">
+          <Layers className="size-4" />
+          Membership tiers
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Membership tiers</DialogTitle>
+          <DialogDescription>
+            Name your tiers and price each one — this is the only thing your channel sells.
+          </DialogDescription>
+        </DialogHeader>
+
+        <MembershipTiersEditor tiers={tiers} currency={currency} onChanged={onChanged} />
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -527,92 +575,3 @@ function TierCard({
   )
 }
 
-/**
- * One catalogue row. A locked video is deliberately still listed and still named —
- * it is the thing being sold.
- *
- * A locked `subscriber` row is not a link: what would open it is the ladder further up
- * this very page, so there is nowhere useful to send the viewer. A locked `buyer` row
- * is the opposite — it is bought on the video's own page — so it stays a link, or the
- * button that sells it would be unreachable from here.
- */
-function ChannelVideoRow({
-  video,
-  subscribed,
-  currency,
-}: {
-  video: ChannelVideo
-  subscribed: boolean
-  currency: string
-}) {
-  const price = video.priceCents !== null ? formatPrice(video.priceCents, currency) : null
-  const paid = video.premium || video.payPerView
-
-  const body = (
-    <>
-      <p className="flex items-center gap-2 font-medium text-slate-900">
-        {paid ? (
-          video.unlocked ? (
-            <Play className="size-4 shrink-0 text-primary" aria-hidden />
-          ) : (
-            <Lock className="size-4 shrink-0 text-slate-400" aria-hidden />
-          )
-        ) : null}
-        {video.title}
-        {video.visibility === 'private' ? (
-          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
-            <EyeOff className="size-3" aria-hidden />
-            Private
-          </span>
-        ) : video.payPerView ? (
-          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
-            <Ticket className="size-3" aria-hidden />
-            {price ?? 'Pay-per-view'}
-          </span>
-        ) : video.premium ? (
-          <span className="rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
-            {video.requiredTierName || 'Premium'}
-          </span>
-        ) : null}
-      </p>
-      {video.description ? <p className="text-sm text-slate-500">{video.description}</p> : null}
-    </>
-  )
-
-  // A pay-per-view row says so plainly even when locked: a viewer who subscribes here
-  // must not be left expecting their membership to cover it.
-  const call = video.payPerView
-    ? price
-      ? `Bought on its own for ${price} — not included in a subscription.`
-      : 'Bought on its own, not included in a subscription.'
-    : // A viewer who is already paying needs to hear "upgrade", not "subscribe" — the
-      // same distinction `tierRequired` draws on the server.
-      video.requiredTierName
-      ? subscribed
-        ? `Needs the ${video.requiredTierName} tier.`
-        : `Subscribe at ${video.requiredTierName} or higher to watch.`
-      : 'Subscribe to watch.'
-
-  if (!video.unlocked && !video.payPerView) {
-    return (
-      <div className="rounded-xl border border-dashed px-3 py-2 opacity-70">
-        {body}
-        <p className="text-sm text-slate-500">{call}</p>
-      </div>
-    )
-  }
-
-  return (
-    <Link
-      to="/video"
-      search={{ id: video.id }}
-      className={cn(
-        'block rounded-xl border px-3 py-2 transition hover:bg-slate-50',
-        !video.unlocked && 'border-dashed',
-      )}
-    >
-      {body}
-      {!video.unlocked ? <p className="text-sm text-slate-500">{call}</p> : null}
-    </Link>
-  )
-}

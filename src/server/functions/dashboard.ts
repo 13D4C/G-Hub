@@ -23,7 +23,11 @@ import type { VideoVisibility } from '@/lib/video-visibility'
 export type DashboardVideo = {
   id: string
   title: string
+  description: string
+  durationSeconds: number
   visibility: VideoVisibility
+  requiredTierId: string | null
+  priceCents: number | null
   createdAt: string
   viewCount: number
   likeCount: number
@@ -62,7 +66,9 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
       // disagree about what the ladder is.
       readLadder(creatorId),
       VideoModel.find({ uploadedBy: creatorId })
-        .select('title visibility createdAt viewCount likeCount shareCount')
+        .select(
+          'title description durationSeconds visibility requiredTierId priceCents createdAt viewCount likeCount shareCount',
+        )
         .sort({ createdAt: -1 })
         .limit(100)
         .lean(),
@@ -106,7 +112,11 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
       videos: videos.map((v) => ({
         id: String(v._id),
         title: v.title,
+        description: v.description,
+        durationSeconds: v.durationSeconds,
         visibility: v.visibility as VideoVisibility,
+        requiredTierId: v.requiredTierId ? String(v.requiredTierId) : null,
+        priceCents: v.priceCents ?? null,
         createdAt: v.createdAt.toISOString(),
         viewCount: v.viewCount ?? 0,
         likeCount: v.likeCount ?? 0,
