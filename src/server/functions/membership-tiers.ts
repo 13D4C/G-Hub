@@ -2,6 +2,8 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
+import { VIDEO_ERRORS } from '@/lib/video-errors'
+import { VIDEO_PRICE_MAX_CENTS, VIDEO_PRICE_MIN_CENTS } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES } from '@/lib/video-visibility'
 import { requireUserId } from '@/server/auth/require-user'
 import {
@@ -182,32 +184,52 @@ const updateVideoAccessSchema = z.object({
   visibility: z.enum(VIDEO_VISIBILITIES),
   /** Null means "any active subscriber". Ignored unless `visibility` is `subscriber`. */
   tierId: objectId.nullable(),
+  /**
+   * Minor units. Ignored unless `visibility` is `buyer`, and required when it is.
+   * Bounded here as well as in `src/lib/video-price.ts` so a hand-built request cannot
+   * price a video at a figure Checkout would refuse to charge.
+   */
+  priceCents: z.number().int().min(VIDEO_PRICE_MIN_CENTS).max(VIDEO_PRICE_MAX_CENTS).nullable(),
 })
 
 /**
  * Change who may watch one of the creator's own uploads: how wide the audience is,
- * and — for a `subscriber` video — which membership tier it needs. This is the third
- * acceptance criterion, and the only way to re-gate a video after upload.
+ * and — for a `subscriber` video — which membership tier it needs, or — for a `buyer`
+ * one — what it sells for. This is the third acceptance criterion, and the only way to
+ * re-gate a video after upload.
  *
- * Both settings move together in one call rather than through two functions. They
- * constrain each other, and two independent writes would let a video sit as
- * `public` with a tier gate hanging off it: a contradiction the player would resolve
- * in the viewer's favour, quietly giving away what the creator just priced.
+ * All three settings move together in one call rather than through separate
+ * functions. They constrain each other, and independent writes would let a video sit
+ * as `public` with a tier gate hanging off it, or as `buyer` with no price: the first
+ * is a contradiction the player would resolve in the viewer's favour, quietly giving
+ * away what the creator just priced, and the second is a paywall its own checkout
+ * refuses to open.
  *
- * The tier is therefore cleared for anything but `subscriber`, and preroll ads are
- * recomputed here the same way `createVideo` computes them, so a video that stops
- * being public starts earning from the subscription instead of from an ad.
+ * The tier is therefore cleared for anything but `subscriber` and the price for
+ * anything but `buyer`, and preroll ads are recomputed here the same way `createVideo`
+ * computes them, so a video that stops being public starts earning from what sells it
+ * instead of from an ad.
  */
 export const updateVideoAccess = createServerFn({ method: 'POST' })
   .validator(updateVideoAccessSchema)
   .handler(
     async ({
       data,
-    }): Promise<{ videoId: string; visibility: string; tierId: string | null }> => {
+    }): Promise<{
+      videoId: string
+      visibility: string
+      tierId: string | null
+      priceCents: number | null
+    }> => {
       const creatorId = await requireUserId()
       await connectToDatabase()
 
       const tierId = data.visibility === 'subscriber' ? data.tierId : null
+      const priceCents = data.visibility === 'buyer' ? data.priceCents : null
+      // Refused rather than saved unpriced, for the reason in the doc comment above.
+      if (data.visibility === 'buyer' && priceCents === null) {
+        throw new Error(VIDEO_ERRORS.priceRequired)
+      }
 
       if (tierId) {
         const tier = await MembershipTierModel.findOne({
@@ -228,6 +250,7 @@ export const updateVideoAccess = createServerFn({ method: 'POST' })
           $set: {
             visibility: data.visibility,
             requiredTierId: tierId,
+            priceCents,
             adsEnabled: data.visibility === 'public',
           },
         },
@@ -235,6 +258,6 @@ export const updateVideoAccess = createServerFn({ method: 'POST' })
       // Does not distinguish "gone" from "not yours", same as `deleteComment`.
       if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
-      return { videoId: data.videoId, visibility: data.visibility, tierId }
+      return { videoId: data.videoId, visibility: data.visibility, tierId, priceCents }
     },
   )

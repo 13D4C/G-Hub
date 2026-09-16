@@ -19,6 +19,8 @@
     "migrate:visibility": "node --env-file=.env --experimental-strip-types scripts/migrate-video-visibility.ts",
     "test:tier-access": "node --experimental-strip-types scripts/test-tier-access.ts",
     "test:payment-kind": "node --experimental-strip-types scripts/test-payment-kind.ts",
+    "test:video-price": "node --experimental-strip-types scripts/test-video-price.ts",
+    "test:ppv-gate": "node --env-file=.env --experimental-strip-types scripts/test-ppv-gate.ts",
     "test:membership-tier": "node --env-file=.env --experimental-strip-types scripts/test-membership-tier.ts",
     "test:tips": "node --experimental-strip-types scripts/test-tips.ts",
     "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts"

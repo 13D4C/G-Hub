@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { EyeOff, Lock, Play, Tv } from 'lucide-react'
+import { EyeOff, Lock, Play, Ticket, Tv } from 'lucide-react'
 import { z } from 'zod'
 import { EmptyState } from '@/components/empty-state'
 import { MembershipTiersEditor } from '@/components/membership-tiers-editor'
@@ -263,7 +263,11 @@ function ChannelPage() {
           <ul className="flex flex-col gap-2">
             {channel.videos.map((video) => (
               <li key={video.id}>
-                <ChannelVideoRow video={video} subscribed={channel.subscribed} />
+                <ChannelVideoRow
+                  video={video}
+                  subscribed={channel.subscribed}
+                  currency={channel.currency}
+                />
               </li>
             ))}
           </ul>
@@ -525,14 +529,29 @@ function TierCard({
 
 /**
  * One catalogue row. A locked video is deliberately still listed and still named —
- * it is the thing being sold — but it is not a link, because there is nothing behind
- * it for this viewer yet.
+ * it is the thing being sold.
+ *
+ * A locked `subscriber` row is not a link: what would open it is the ladder further up
+ * this very page, so there is nowhere useful to send the viewer. A locked `buyer` row
+ * is the opposite — it is bought on the video's own page — so it stays a link, or the
+ * button that sells it would be unreachable from here.
  */
-function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribed: boolean }) {
+function ChannelVideoRow({
+  video,
+  subscribed,
+  currency,
+}: {
+  video: ChannelVideo
+  subscribed: boolean
+  currency: string
+}) {
+  const price = video.priceCents !== null ? formatPrice(video.priceCents, currency) : null
+  const paid = video.premium || video.payPerView
+
   const body = (
     <>
       <p className="flex items-center gap-2 font-medium text-slate-900">
-        {video.premium ? (
+        {paid ? (
           video.unlocked ? (
             <Play className="size-4 shrink-0 text-primary" aria-hidden />
           ) : (
@@ -545,6 +564,11 @@ function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribe
             <EyeOff className="size-3" aria-hidden />
             Private
           </span>
+        ) : video.payPerView ? (
+          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
+            <Ticket className="size-3" aria-hidden />
+            {price ?? 'Pay-per-view'}
+          </span>
         ) : video.premium ? (
           <span className="rounded-full border px-2 py-0.5 text-xs font-normal text-slate-500">
             {video.requiredTierName || 'Premium'}
@@ -555,15 +579,21 @@ function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribe
     </>
   )
 
-  if (!video.unlocked) {
-    // A viewer who is already paying needs to hear "upgrade", not "subscribe" — the
-    // same distinction `tierRequired` draws on the server.
-    const call = video.requiredTierName
+  // A pay-per-view row says so plainly even when locked: a viewer who subscribes here
+  // must not be left expecting their membership to cover it.
+  const call = video.payPerView
+    ? price
+      ? `Bought on its own for ${price} — not included in a subscription.`
+      : 'Bought on its own, not included in a subscription.'
+    : // A viewer who is already paying needs to hear "upgrade", not "subscribe" — the
+      // same distinction `tierRequired` draws on the server.
+      video.requiredTierName
       ? subscribed
         ? `Needs the ${video.requiredTierName} tier.`
         : `Subscribe at ${video.requiredTierName} or higher to watch.`
       : 'Subscribe to watch.'
 
+  if (!video.unlocked && !video.payPerView) {
     return (
       <div className="rounded-xl border border-dashed px-3 py-2 opacity-70">
         {body}
@@ -576,9 +606,13 @@ function ChannelVideoRow({ video, subscribed }: { video: ChannelVideo; subscribe
     <Link
       to="/video"
       search={{ id: video.id }}
-      className="block rounded-xl border px-3 py-2 transition hover:bg-slate-50"
+      className={cn(
+        'block rounded-xl border px-3 py-2 transition hover:bg-slate-50',
+        !video.unlocked && 'border-dashed',
+      )}
     >
       {body}
+      {!video.unlocked ? <p className="text-sm text-slate-500">{call}</p> : null}
     </Link>
   )
 }
