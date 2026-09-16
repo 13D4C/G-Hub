@@ -5,6 +5,7 @@ import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscriptio
 import { TipModel } from '@/server/db/models/tip'
 import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
+import { VideoPurchaseModel } from '@/server/db/models/video-purchase'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-totals'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
@@ -29,6 +30,10 @@ export type DashboardVideo = {
   shareCount: number
   /** Tips sent from this video's page, in minor units. Channel donations are not here. */
   tipCents: number
+  /** What this video has earned in pay-per-view sales, in minor units. */
+  saleCents: number
+  /** How many times it has been bought. */
+  saleCount: number
 }
 
 export type CreatorDashboard = {
@@ -51,7 +56,7 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
     const creatorId = await requireUserId()
     await connectToDatabase()
 
-    const [creator, tiers, videos, tipsByVideo, subs] = await Promise.all([
+    const [creator, tiers, videos, tipsByVideo, salesByVideo, subs] = await Promise.all([
       UserModel.findById(creatorId).select('name channelName channelCurrency').lean(),
       // Through the shared reader, so the dashboard and the channel page cannot
       // disagree about what the ladder is.
@@ -70,6 +75,14 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
         { $match: { creatorId: new Types.ObjectId(creatorId) } },
         { $group: { _id: '$videoId', total: { $sum: '$amountCents' }, count: { $sum: 1 } } },
       ]),
+      // The same grouping for pay-per-view sales. Every purchase row is money that
+      // actually arrived — see `models/video-purchase.ts` — so no status filter, and
+      // unlike tips every group has a video, so these always add up to the rows.
+      VideoPurchaseModel.aggregate<{ _id: unknown; total: number; count: number }>([
+        // ObjectId, not a string, for the same reason as the tip match above.
+        { $match: { creatorId: new Types.ObjectId(creatorId) } },
+        { $group: { _id: '$videoId', total: { $sum: '$amountCents' }, count: { $sum: 1 } } },
+      ]),
       // Filtered in JS through the shared predicate instead of a `status` query, so
       // the "what counts as entitled" rule is not restated here — a row whose
       // renewal webhook never landed must not be counted as paying.
@@ -84,11 +97,12 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
     const tipCentsByVideo = new Map(
       tipsByVideo.map((row) => [row._id ? String(row._id) : null, row.total]),
     )
+    const salesByVideoId = new Map(salesByVideo.map((row) => [String(row._id), row]))
     return {
       channelName: creator?.channelName || creator?.name || 'Your channel',
       currency: creator?.channelCurrency || 'usd',
       tiers,
-      totals: summarizeTotals(videos, tipsByVideo, subs),
+      totals: summarizeTotals(videos, tipsByVideo, salesByVideo, subs),
       videos: videos.map((v) => ({
         id: String(v._id),
         title: v.title,
@@ -98,6 +112,8 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
         likeCount: v.likeCount ?? 0,
         shareCount: v.shareCount ?? 0,
         tipCents: tipCentsByVideo.get(String(v._id)) ?? 0,
+        saleCents: salesByVideoId.get(String(v._id))?.total ?? 0,
+        saleCount: salesByVideoId.get(String(v._id))?.count ?? 0,
       })),
     }
   },

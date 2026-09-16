@@ -1,25 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { CloudUpload, EyeOff, Globe, Users } from 'lucide-react'
+import { CloudUpload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { describeMutationError } from '@/lib/auth'
 import { myMembershipTiersQueryOptions } from '@/lib/membership-tiers'
+import {
+  VIDEO_PRICE_DEFAULT_CENTS,
+  VIDEO_PRICE_MAX_CENTS,
+  VIDEO_PRICE_MIN_CENTS,
+  parseVideoPrice,
+} from '@/lib/video-price'
 import {
   VIDEO_VISIBILITIES,
   VIDEO_VISIBILITY_HINTS,
   VIDEO_VISIBILITY_LABELS,
   type VideoVisibility,
 } from '@/lib/video-visibility'
+import { VISIBILITY_ICONS } from '@/lib/video-visibility-icons'
+import { formatPrice } from '@/lib/channels'
 import { myVideosQueryOptions } from '@/lib/videos'
 import { createVideo } from '@/server/functions/videos'
-
-/** One glyph per audience, widest to narrowest. */
-const VISIBILITY_ICONS: Record<VideoVisibility, typeof Globe> = {
-  public: Globe,
-  subscriber: Users,
-  private: EyeOff,
-}
 
 export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -31,6 +32,9 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
   const [visibility, setVisibility] = useState<VideoVisibility>('public')
   /** Empty means "any active subscriber", which is what premium meant before tiers. */
   const [requiredTierId, setRequiredTierId] = useState('')
+  // Held as a major-unit string so the field behaves like a price, exactly as the tip
+  // dialog's does. `parseVideoPrice` is the only thing that reads it.
+  const [price, setPrice] = useState(() => (VIDEO_PRICE_DEFAULT_CENTS / 100).toFixed(2))
   const [isDragging, setIsDragging] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
 
@@ -89,6 +93,14 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
       setValidationError('Please give it a title')
       return
     }
+    // Stopped here as well as on the server, so a price the server would refuse never
+    // costs the creator an upload they have to repeat.
+    if (visibility === 'buyer' && priceCents === null) {
+      setValidationError(
+        `Enter a price between ${formatPrice(VIDEO_PRICE_MIN_CENTS, 'usd')} and ${formatPrice(VIDEO_PRICE_MAX_CENTS, 'usd')}`,
+      )
+      return
+    }
 
     setValidationError(null)
     const formData = new FormData()
@@ -96,14 +108,20 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
     formData.set('title', title)
     formData.set('description', description)
     formData.set('visibility', visibility)
-    // Sent only for a `subscriber` upload; the server drops it otherwise anyway,
-    // but leaving it out keeps the request saying exactly what the form shows.
+    // Each sent only for the visibility it belongs to; the server drops the other one
+    // anyway, but leaving it out keeps the request saying exactly what the form shows.
     if (visibility === 'subscriber' && requiredTierId) {
       formData.set('requiredTierId', requiredTierId)
+    }
+    // Minor units on the wire — the decimal parsing happens here, so the server has
+    // only to disbelieve an integer.
+    if (visibility === 'buyer' && priceCents !== null) {
+      formData.set('priceCents', String(priceCents))
     }
     uploadMutation.mutate(formData)
   }
 
+  const priceCents = parseVideoPrice(price)
   const isUploading = uploadMutation.isPending
   const error =
     validationError ??
@@ -183,7 +201,9 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
 
       <div className="flex flex-col gap-2">
         <span className="text-sm font-medium text-slate-700">Visibility</span>
-        <div className="grid grid-cols-3 gap-3">
+        {/* Two columns on a phone, four once there is room: a fourth audience does
+            not fit the three-across row this used to be. */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {VIDEO_VISIBILITIES.map((option) => {
             const Icon = VISIBILITY_ICONS[option]
             return (
@@ -233,6 +253,39 @@ export function UploadVideoForm({ onSuccess }: { onSuccess: () => void }) {
               ? 'Subscribers on this tier or any higher one can watch.'
               : 'You have no membership tiers yet — add them on your channel page to gate videos by tier.'}
           </p>
+        </div>
+      ) : null}
+
+      {/* The other half of that rule: only a `buyer` upload carries a price, and it
+          must carry one — a pay-per-view video with nothing on the ticket is a
+          paywall its own checkout refuses to open. */}
+      {visibility === 'buyer' ? (
+        <div className="flex flex-col gap-2">
+          <label className="text-sm font-medium text-slate-700" htmlFor="priceCents">
+            Price
+          </label>
+          <input
+            id="priceCents"
+            // `inputMode` rather than `type="number"`, whose spinners and locale
+            // handling fight a currency field — the same choice the tip dialog makes.
+            inputMode="decimal"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400"
+          />
+          {/* Only once the creator has typed something unusable — an empty field on
+              open is not an error yet. */}
+          {price.trim() && priceCents === null ? (
+            <p className="text-xs text-red-600">
+              Enter a price between {formatPrice(VIDEO_PRICE_MIN_CENTS, 'usd')} and{' '}
+              {formatPrice(VIDEO_PRICE_MAX_CENTS, 'usd')}.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500">
+              Charged once, in your channel currency. Whoever buys it keeps it — and a
+              channel subscription does not include it.
+            </p>
+          )}
         </div>
       ) : null}
 

@@ -3,7 +3,7 @@ import mongoose, { type InferSchemaType, type Model } from 'mongoose'
 /**
  * One row per tip or channel donation — a single Stripe payment, not a subscription.
  *
- * A row exists only once Stripe says the money arrived: `settleTipSession` writes it
+ * A row exists only once Stripe says the money arrived: `recordTip` writes it
  * from the paid Checkout session, so there is no `status` column and an abandoned
  * checkout leaves nothing behind to clean up. Everything needed to write the row
  * travels in the session's own metadata, which means a tip is never lost to a

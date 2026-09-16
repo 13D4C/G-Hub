@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { VIDEO_ERRORS } from '@/lib/video-errors'
+import { isSellablePrice } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES, type VideoVisibility } from '@/lib/video-visibility'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
@@ -13,6 +14,7 @@ import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import { uploadObject } from '@/server/storage/seaweed'
 import {
   getChannelAccess,
+  loadPurchasedVideoIds,
   loadTierRanks,
   requirePlayableVideo,
   tierRefOf,
@@ -77,10 +79,10 @@ async function tierNameOf(requiredTierId: unknown): Promise<string> {
 /**
  * The browsable catalogue, seen through this viewer's entitlement.
  *
- * `subscriber` videos are listed alongside public ones — that is the point of a
- * paywall: you can see what you would be buying. An *unlocked* one (the viewer
- * subscribes, or uploaded it) is a normal playable card, so paying for a channel
- * makes its videos watchable from here rather than only from the channel page.
+ * `subscriber` and `buyer` videos are listed alongside public ones — that is the point
+ * of a paywall: you can see what you would be buying. An *unlocked* one (the viewer
+ * subscribes, has bought it, or uploaded it) is a normal playable card, so paying
+ * makes a video watchable from here rather than only from the page that sold it.
  * `url` is the one real secret and is withheld from a locked row; playback still
  * goes through `getVideoById`, which re-checks.
  *
@@ -130,21 +132,38 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
     ...videos.map((v) => v.requiredTierId),
   ])
 
+  // And every pay-per-view row on the page in one more query, for the same reason.
+  // Deliberately not folded into `accessTo`: `getChannelAccess` is a query per
+  // channel and its answer is irrelevant here, since a purchase is per video and
+  // ownership is a string compare.
+  const purchasedIds = await loadPurchasedVideoIds(
+    viewerId,
+    videos.filter((v) => v.visibility === 'buyer').map((v) => v._id),
+  )
+
   return videos.map((v) => {
     const creatorId = v.uploadedBy ? String(v.uploadedBy) : null
     const visibility = v.visibility as VideoVisibility
     const premium = visibility === 'subscriber'
+    const forSale = visibility === 'buyer'
     const access = creatorId ? accessTo.get(creatorId) : undefined
-    // Subscribed at all, and then high enough on the ladder — the same two-part rule
-    // `requirePlayableVideo` applies when the viewer actually presses play. A
-    // `private` row only survived the query for its owner, so it is always unlocked
-    // by the time it gets here.
-    const unlocked =
-      !premium ||
-      (!!access &&
-        access.subscribed &&
-        (access.isOwner ||
-          tierUnlocks(tierRefOf(access.tierId, ranks), tierRefOf(v.requiredTierId, ranks))))
+    // Two rules, matching the two arms of `requirePlayableVideo`:
+    //
+    // - `buyer`: bought it, or uploaded it. Nothing else opens it, and it needs its
+    //   own branch rather than falling into the tier rule below — that rule starts
+    //   with `!premium`, which is true of every non-`subscriber` video and would
+    //   hand this one out to everybody.
+    // - `subscriber`: subscribed at all, and then high enough on the ladder.
+    //
+    // A `private` row only survived the query for its owner, so it is always
+    // unlocked by the time it gets here.
+    const unlocked = forSale
+      ? !!viewerId && (creatorId === viewerId || purchasedIds.has(String(v._id)))
+      : !premium ||
+        (!!access &&
+          access.subscribed &&
+          (access.isOwner ||
+            tierUnlocks(tierRefOf(access.tierId, ranks), tierRefOf(v.requiredTierId, ranks))))
 
     return {
       id: String(v._id),
@@ -154,6 +173,10 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
       durationSeconds: v.durationSeconds,
       visibility,
       premium,
+      /** True for `visibility: 'buyer'` — sold once, per video, and kept. */
+      payPerView: forSale,
+      /** What it costs, for the price on a locked card. Null when it is not for sale. */
+      priceCents: forSale ? (v.priceCents ?? null) : null,
       /** False when this viewer may not play it, which is what draws the lock. */
       unlocked,
       channel: creatorId ? (channelById.get(creatorId) ?? null) : null,
@@ -177,6 +200,16 @@ export type PlaybackData = {
   subscribed: boolean
   visibility: VideoVisibility
   premium: boolean
+  /** True for `visibility: 'buyer'` — bought once, per video. */
+  payPerView: boolean
+  /**
+   * True when this viewer holds this pay-per-view video — bought it, or uploaded it.
+   *
+   * Only ever true alongside `payPerView`: the other visibilities have their own
+   * notion of access and report it through `subscribed`, so this is not a general
+   * "may watch" flag. It is playing, so they may.
+   */
+  owned: boolean
   /** The tier that gates this video, empty when any subscriber may watch it. */
   requiredTierName: string
   preroll: PrerollAd | null
@@ -187,11 +220,12 @@ export type PlaybackData = {
  *
  * Public videos are open to everyone; `subscriber` ones require an active
  * subscription to the video's channel, and one gated behind a membership tier
- * requires that tier or higher. `requirePlayableVideo` throws `subscriptionRequired`
- * or `tierRequired` otherwise — the two messages the `/video` route turns into a
- * subscribe prompt and an upgrade prompt — and reports a `private` video as missing.
+ * requires that tier or higher; a `buyer` one requires having bought that exact
+ * video. `requirePlayableVideo` throws `subscriptionRequired`, `tierRequired` or
+ * `purchaseRequired` otherwise — the three messages the `/video` route turns into a
+ * subscribe, upgrade or buy prompt — and reports a `private` video as missing.
  * A subscriber of any tier watches that channel ad-free, which is the other half of
- * what they paid for.
+ * what they paid for; a `buyer` video carries no ad for anyone.
  */
 export const getVideoById = createServerFn({ method: 'GET' })
   .validator(getVideoByIdSchema)
@@ -199,7 +233,10 @@ export const getVideoById = createServerFn({ method: 'GET' })
     const viewerId = await getUserId()
     await connectToDatabase()
 
-    const { video, subscribed } = await requirePlayableVideo(data.videoId, viewerId)
+    const { video, subscribed, purchased } = await requirePlayableVideo(data.videoId, viewerId)
+    // A `buyer` video already has `adsEnabled: false`, so the preroll never reaches
+    // someone who paid for this one video — `!subscribed` is simply not the clause
+    // doing the work there.
     const preroll = video.adsEnabled && !subscribed ? await pickPrerollAd() : null
 
     // The one place a view is counted: this is the only handler that hands out a
@@ -221,6 +258,8 @@ export const getVideoById = createServerFn({ method: 'GET' })
       subscribed,
       visibility: video.visibility as VideoVisibility,
       premium: video.visibility === 'subscriber',
+      payPerView: video.visibility === 'buyer',
+      owned: purchased,
       requiredTierName: await tierNameOf(video.requiredTierId),
       preroll,
     }
@@ -233,8 +272,12 @@ export type LockedVideo = {
   title: string
   description: string
   channel: VideoChannel | null
+  /** Which kind of lock this is, so the paywall knows what to offer. */
+  visibility: VideoVisibility
   /** The tier that would open it, empty when a plain subscription suffices. */
   requiredTierName: string
+  /** What buying it costs. Null unless this is a `buyer` video. */
+  priceCents: number | null
 }
 
 /**
@@ -250,7 +293,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
     await connectToDatabase()
 
     const video = await VideoModel.findById(data.videoId)
-      .select('title description uploadedBy requiredTierId visibility')
+      .select('title description uploadedBy requiredTierId visibility priceCents')
       .lean()
     if (!video) return null
     // Unreachable today — the `/video` route only calls this after a paywall
@@ -264,7 +307,9 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
       title: video.title,
       description: video.description,
       channel: await channelOf(video.uploadedBy),
+      visibility: video.visibility as VideoVisibility,
       requiredTierName: await tierNameOf(video.requiredTierId),
+      priceCents: video.visibility === 'buyer' ? (video.priceCents ?? null) : null,
     }
   })
 
@@ -277,6 +322,8 @@ export type MyVideo = {
   visibility: VideoVisibility
   /** The tier gating it, or null for "any active subscriber". */
   requiredTierId: string | null
+  /** What it sells for, or null when it is not a `buyer` video. */
+  priceCents: number | null
   likeCount: number
   shareCount: number
   createdAt: string
@@ -300,6 +347,7 @@ export const listMyVideos = createServerFn({ method: 'GET' }).handler(
       durationSeconds: v.durationSeconds,
       visibility: v.visibility as VideoVisibility,
       requiredTierId: v.requiredTierId ? String(v.requiredTierId) : null,
+      priceCents: v.priceCents ?? null,
       likeCount: v.likeCount ?? 0,
       shareCount: v.shareCount ?? 0,
       createdAt: v.createdAt.toISOString(),
@@ -331,12 +379,28 @@ export const createVideo = createServerFn({ method: 'POST' })
     // disagree in the database.
     const requestedTierId =
       visibility === 'subscriber' ? String(data.get('requiredTierId') ?? '').trim() : ''
+    // The mirror of that rule for the other paid state. A price on anything but a
+    // `buyer` video is dropped, and a `buyer` video without a usable one is refused
+    // rather than saved: it would be a paywall its own checkout cannot open.
+    //
+    // Minor units on the wire — the form does the decimal parsing with
+    // `parseVideoPrice`, so the only thing left to do here is disbelieve it.
+    const requestedPrice = Number(String(data.get('priceCents') ?? '').trim())
+    const priceCents =
+      visibility === 'buyer' && Number.isInteger(requestedPrice) && isSellablePrice(requestedPrice)
+        ? requestedPrice
+        : null
 
     if (!(file instanceof File) || !file.type.startsWith('video/')) {
       throw new Error(VIDEO_ERRORS.invalidFile)
     }
     if (!title) {
       throw new Error(VIDEO_ERRORS.titleRequired)
+    }
+    // Checked before the upload, for the same reason the tier is: a rejected gate
+    // must not leave an orphaned object in SeaweedFS.
+    if (visibility === 'buyer' && priceCents === null) {
+      throw new Error(VIDEO_ERRORS.invalidPrice)
     }
 
     await connectToDatabase()
@@ -367,10 +431,11 @@ export const createVideo = createServerFn({ method: 'POST' })
       url,
       visibility,
       requiredTierId,
+      priceCents,
       uploadedBy: userId,
-      // A `subscriber` video is the subscription's product; running an ad in front
-      // of it as well would be selling the same minute twice. A private one has no
-      // audience to advertise to.
+      // A `subscriber` video is the subscription's product, and a `buyer` one is the
+      // purchase's; running an ad in front of either would be selling the same minute
+      // twice. A private one has no audience to advertise to.
       adsEnabled: visibility === 'public',
     })
 
