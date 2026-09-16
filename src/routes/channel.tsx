@@ -285,7 +285,12 @@ function ChannelPage() {
                 hideChannelLink
                 video={{
                   ...video,
-                  channel: { creatorId: channel.creatorId, name: channel.name, currency: channel.currency },
+                  channel: {
+                    creatorId: channel.creatorId,
+                    name: channel.name,
+                    currency: channel.currency,
+                    avatarUrl: channel.avatarUrl,
+                  },
                 }}
               />
             ))}

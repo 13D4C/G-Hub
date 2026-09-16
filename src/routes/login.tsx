@@ -24,11 +24,13 @@ function AuthPage() {
   const { redirect: redirectTo, authError } = Route.useSearch()
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
-      <Card className="grid grid-cols-1 gap-0 divide-y divide-slate-200 p-0 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-        <LoginForm redirectTo={redirectTo} authError={authError} />
-        <RegisterForm redirectTo={redirectTo} />
-      </Card>
+    <div className="flex min-h-[calc(100dvh-7rem)] items-center justify-center">
+      <div className="mx-auto w-full max-w-3xl">
+        <Card className="grid grid-cols-1 gap-0 divide-y divide-slate-200 p-0 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+          <LoginForm redirectTo={redirectTo} authError={authError} />
+          <RegisterForm redirectTo={redirectTo} />
+        </Card>
+      </div>
     </div>
   )
 }

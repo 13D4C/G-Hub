@@ -1,10 +1,13 @@
 import type { CSSProperties } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
+import { meQueryOptions } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Home' },
-  { to: '/dashboard', label: 'Dashboard' },
+  { to: '/', label: 'Home', requiresAuth: false },
+  { to: '/subscribed', label: 'Subscribed', requiresAuth: true },
+  { to: '/dashboard', label: 'Dashboard', requiresAuth: false },
 ] as const
 
 const PAPER_BACKGROUND: CSSProperties = {
@@ -68,6 +71,9 @@ export function RollTrigger({ open, onToggle }: SidebarProps) {
 }
 
 export function PaperFlyout({ open }: { open: boolean }) {
+  const { data: user } = useQuery(meQueryOptions)
+  const navItems = NAV_ITEMS.filter((item) => !item.requiresAuth || user)
+
   return (
     <div
       id="app-sidebar"
@@ -87,7 +93,7 @@ export function PaperFlyout({ open }: { open: boolean }) {
           )}
         >
           <ul className="m-0 shrink-0 list-none pt-4">
-            {NAV_ITEMS.map(({ to, label }) => (
+            {navItems.map(({ to, label }) => (
               <li key={to} className="border-b-2 border-dashed border-black/10 text-center">
                 <Link
                   to={to}
