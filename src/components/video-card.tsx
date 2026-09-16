@@ -59,10 +59,12 @@ function CardTarget({
   video,
   className,
   children,
+  hideChannelLink,
 }: {
   video: VideoSummary
   className?: string
   children: React.ReactNode
+  hideChannelLink?: boolean
 }) {
   if (video.unlocked || (video.payPerView && video.channel)) {
     return (
@@ -71,7 +73,7 @@ function CardTarget({
       </Link>
     )
   }
-  if (video.channel) {
+  if (video.channel && !hideChannelLink) {
     return (
       <Link to="/channel" search={{ id: video.channel.creatorId }} className={className}>
         {children}
@@ -84,9 +86,11 @@ function CardTarget({
 export function VideoCard({
   video,
   variant = 'grid',
+  hideChannelLink = false,
 }: {
   video: VideoSummary
   variant?: 'grid' | 'list'
+  hideChannelLink?: boolean
 }) {
   const locked = !video.unlocked
   const isGrid = variant === 'grid'
@@ -169,9 +173,9 @@ export function VideoCard({
       ? price
         ? `Buy for ${price} to watch`
         : 'Sold on its own'
-      : video.channel
+      : video.channel && !hideChannelLink
         ? `Subscribe to ${video.channel.name} to watch`
-        : 'Premium video'
+        : 'Subscribe to watch'
     : video.description
 
   return (
@@ -180,11 +184,12 @@ export function VideoCard({
       className={cn(
         'gap-0 overflow-hidden py-0 transition-transform',
         isGrid ? 'hover:-translate-y-1' : 'flex-row items-start gap-4 rounded-2xl p-3',
-        locked && !video.channel && 'opacity-90',
+        locked && !(video.channel && !hideChannelLink) && 'opacity-90',
       )}
     >
       <CardTarget
         video={video}
+        hideChannelLink={hideChannelLink}
         className={cn(
           'group relative block overflow-hidden bg-slate-900',
           isGrid ? 'aspect-video w-full' : 'aspect-video w-44 shrink-0 rounded-xl sm:w-52',
@@ -194,10 +199,6 @@ export function VideoCard({
       </CardTarget>
 
       <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
-        {/* Why the feed surfaced this row. Branching on the label rather than on
-            `video.reason` is what keeps the merely-recent case ('new', which has
-            nothing to explain) from needing a second condition here. Absent
-            entirely on `listVideos` rows, so the watch page's rail is unchanged. */}
         {reasonLabel ? (
           <span
             className={cn(
@@ -209,7 +210,7 @@ export function VideoCard({
           </span>
         ) : null}
 
-        <CardTarget video={video}>
+        <CardTarget video={video} hideChannelLink={hideChannelLink}>
           <CardTitle
             className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
           >
@@ -220,7 +221,7 @@ export function VideoCard({
         {/* The only way to reach a channel you do not already have a locked video
             from — without it, a creator who publishes nothing premium is
             unreachable from the catalogue. */}
-        {video.channel ? (
+        {video.channel && !hideChannelLink ? (
           <Link
             to="/channel"
             search={{ id: video.channel.creatorId }}

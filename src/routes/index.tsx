@@ -18,6 +18,7 @@ function HomePage() {
 
   return (
     <Card variant="paper" className="flex flex-col gap-6 p-6">
+      <h1 className="font-display text-2xl font-semibold text-slate-900">Recommended</h1>
       {videos.length === 0 ? (
         <EmptyState
           icon={Waves}

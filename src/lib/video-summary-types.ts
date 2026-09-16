@@ -23,6 +23,7 @@ export type VideoChannel = {
   name: string
   /** What this creator prices in, so the tip dialog offers the right symbol. */
   currency: string
+  avatarUrl: string
 }
 
 export type VideoSummary = {

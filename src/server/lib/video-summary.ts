@@ -46,11 +46,13 @@ export function channelFrom(creator: {
   name?: string
   channelName?: string
   channelCurrency?: string
+  avatarUrl?: string
 }): VideoChannel {
   return {
     creatorId: String(creator._id),
     name: creator.channelName || creator.name || 'Untitled channel',
     currency: creator.channelCurrency || 'usd',
+    avatarUrl: creator.avatarUrl || '',
   }
 }
 
@@ -86,7 +88,7 @@ export async function summarizeVideosForViewer(
   // CastError that takes the whole home page down.
   const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
   const creators = await UserModel.find({ _id: { $in: creatorIds } })
-    .select('name channelName channelCurrency')
+    .select('name channelName channelCurrency avatarUrl')
     .lean()
   const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 

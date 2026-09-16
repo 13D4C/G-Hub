@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
 
 /**
  * SeaweedFS storage client (S3-compatible gateway).
@@ -63,4 +63,18 @@ export async function uploadObject({ key, body, contentType }: UploadInput): Pro
   )
 
   return publicUrl(key)
+}
+
+export function keyFromPublicUrl(url: string): string | null {
+  const prefix = `${publicBase}/${SEAWEED_BUCKET}/`
+  if (!url.startsWith(prefix)) return null
+  return url
+    .slice(prefix.length)
+    .split('/')
+    .map((segment) => decodeURIComponent(segment))
+    .join('/')
+}
+
+export async function deleteObject(key: string): Promise<void> {
+  await getClient().send(new DeleteObjectCommand({ Bucket: SEAWEED_BUCKET, Key: key }))
 }
