@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { BarChart3, Eye, EyeOff, Globe, Heart, Users } from 'lucide-react'
+import { BarChart3, Eye, Heart, Ticket, Users } from 'lucide-react'
 import { EmptyState } from '@/components/empty-state'
 import { Card } from '@/components/ui/card'
 import { meQueryOptions } from '@/lib/auth'
@@ -8,6 +8,7 @@ import { formatPrice } from '@/lib/channels'
 import { dashboardQueryOptions, formatCount } from '@/lib/dashboard'
 import { formatDate } from '@/lib/utils'
 import { VIDEO_VISIBILITY_LABELS } from '@/lib/video-visibility'
+import { VISIBILITY_ICONS } from '@/lib/video-visibility-icons'
 import type { CreatorDashboard } from '@/server/functions/dashboard'
 
 /**
@@ -62,7 +63,7 @@ function DashboardPage() {
         ) : null}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat icon={Eye} label="Views" value={formatCount(totals.views)} />
         <Stat
           icon={Heart}
@@ -86,6 +87,12 @@ function DashboardPage() {
           value={formatPrice(totals.tipCents, currency)}
           hint={`${formatCount(totals.tipCount)} tip${totals.tipCount === 1 ? '' : 's'}`}
         />
+        <Stat
+          icon={Ticket}
+          label="Sales"
+          value={formatPrice(totals.saleCents, currency)}
+          hint={`${formatCount(totals.saleCount)} pay-per-view sale${totals.saleCount === 1 ? '' : 's'}`}
+        />
       </div>
 
       <Card className="overflow-hidden p-0">
@@ -105,6 +112,7 @@ function DashboardPage() {
                   <th className="px-5 py-3 text-right">Likes</th>
                   <th className="px-5 py-3 text-right">Shares</th>
                   <th className="px-5 py-3 text-right">Tips</th>
+                  <th className="px-5 py-3 text-right">Sales</th>
                 </tr>
               </thead>
               <tbody>
@@ -158,6 +166,8 @@ function VideoRow({
   video: CreatorDashboard['videos'][number]
   currency: string
 }) {
+  const Icon = VISIBILITY_ICONS[video.visibility]
+
   return (
     <tr className="border-b border-slate-100 last:border-b-0">
       <td className="px-5 py-3 font-medium text-slate-900">
@@ -173,13 +183,10 @@ function VideoRow({
               : 'inline-flex items-center gap-1.5 text-slate-500'
           }
         >
-          {video.visibility === 'public' ? (
-            <Globe className="size-3.5" />
-          ) : video.visibility === 'subscriber' ? (
-            <Users className="size-3.5" />
-          ) : (
-            <EyeOff className="size-3.5" />
-          )}
+          {/* Through the shared map rather than a ternary chain. The chain that used
+              to be here ended in an `else`, so a visibility it did not know about was
+              silently drawn with the Private glyph beside its own label. */}
+          <Icon className="size-3.5" />
           {VIDEO_VISIBILITY_LABELS[video.visibility]}
         </span>
       </td>
@@ -189,6 +196,15 @@ function VideoRow({
       <td className="px-5 py-3 text-right text-slate-600">{formatCount(video.shareCount)}</td>
       <td className="px-5 py-3 text-right text-slate-600">
         {video.tipCents > 0 ? formatPrice(video.tipCents, currency) : '—'}
+      </td>
+      <td className="px-5 py-3 text-right text-slate-600">
+        {video.saleCount > 0 ? (
+          <span title={`${formatCount(video.saleCount)} sold`}>
+            {formatPrice(video.saleCents, currency)}
+          </span>
+        ) : (
+          '—'
+        )}
       </td>
     </tr>
   )

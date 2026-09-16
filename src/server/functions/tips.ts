@@ -8,7 +8,8 @@ import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
-import { settleTipSession } from '@/server/lib/tip-settle'
+import { PAYMENT_KIND_TIP } from '@/server/lib/payment-kind'
+import { settlePaidSession } from '@/server/lib/payment-settle'
 
 /**
  * One-time tips: a viewer paying a creator directly, either from under a video or
@@ -16,7 +17,7 @@ import { settleTipSession } from '@/server/lib/tip-settle'
  * nothing here touches entitlement, and a tip never unlocks a premium video.
  *
  * Nothing is written when checkout starts. The tip row appears only once Stripe
- * reports the session paid; see `src/server/lib/tip-settle.ts`.
+ * reports the session paid; see `src/server/lib/tip-record.ts`.
  *
  * Test mode only; see `src/server/lib/stripe.ts`.
  */
@@ -93,8 +94,9 @@ export const startTipCheckout = createServerFn({ method: 'POST' })
         },
       ],
       // The only record of who tipped whom until the webhook lands, stamped
-      // server-side. `settleTipSession` reads the row back out of here.
-      metadata: { supporterId, creatorId, videoId: data.videoId ?? '' },
+      // server-side. `recordTip` reads the row back out of here, and `kind` is what
+      // keeps a pay-per-view purchase from being credited here as a donation.
+      metadata: { kind: PAYMENT_KIND_TIP, supporterId, creatorId, videoId: data.videoId ?? '' },
       // The session id travels back in the URL so the return can settle the tip
       // itself. Without it the webhook is the *only* settlement path, and a tip
       // whose webhook never arrives is money taken that no creator is ever
@@ -114,7 +116,7 @@ const confirmTipSchema = z.object({ sessionId: z.string().min(1).max(200) })
  *
  * The webhook remains the durable path — a viewer who pays and closes the tab never
  * reaches this — but it is no longer the only one. Both call the same idempotent
- * `settleTipSession`, which re-reads the session from Stripe and upserts on its id,
+ * `recordPaidSession`, which re-reads the session from Stripe and upserts on its id,
  * so whichever arrives first wins and the second is a no-op.
  *
  * The session id comes out of the URL and is treated as untrusted, but it needs no
@@ -128,5 +130,5 @@ export const confirmTip = createServerFn({ method: 'POST' })
   .handler(async ({ data }): Promise<void> => {
     await requireUserId()
     await connectToDatabase()
-    await settleTipSession(data.sessionId)
+    await settlePaidSession(data.sessionId)
   })

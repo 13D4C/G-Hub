@@ -12,6 +12,7 @@ import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 import {
   isEntitled,
+  loadPurchasedVideoIds,
   loadTierRanks,
   tierRefOf,
   tierStanding,
@@ -63,12 +64,16 @@ export type ChannelVideo = {
   visibility: VideoVisibility
   /** True for `visibility: 'subscriber'` — playable only by an active subscriber. */
   premium: boolean
+  /** True for `visibility: 'buyer'` — playable only by whoever bought this one video. */
+  payPerView: boolean
   /** False when this viewer may not play it, which is what draws the lock. */
   unlocked: boolean
   /** The tier this video is gated behind, or null for "any active subscriber". */
   requiredTierId: string | null
   /** That tier's name, so a locked row can say what would open it. Empty when ungated. */
   requiredTierName: string
+  /** What buying it costs, so a locked row can quote a price. Null unless `payPerView`. */
+  priceCents: number | null
 }
 
 export type ChannelView = {
@@ -152,7 +157,7 @@ export const getChannel = createServerFn({ method: 'GET' })
         uploadedBy: creator._id,
         ...(isOwner ? {} : { visibility: { $ne: 'private' } }),
       })
-        .select('title description durationSeconds visibility requiredTierId')
+        .select('title description durationSeconds visibility requiredTierId priceCents')
         .sort({ createdAt: -1 })
         .limit(100)
         .lean(),
@@ -180,6 +185,13 @@ export const getChannel = createServerFn({ method: 'GET' })
     const tierNameById = new Map(tiers.map((t) => [t.id, t.name]))
     const heldTier = tierRefOf(viewerTierId, ranks)
 
+    // One query for every pay-per-view row on the page, the same shape `ranks` uses.
+    // A purchase is per video and owes nothing to the subscription above.
+    const purchasedIds = await loadPurchasedVideoIds(
+      viewerId,
+      videos.filter((v) => v.visibility === 'buyer').map((v) => v._id),
+    )
+
     // Every tip row is money that actually arrived — see `models/tip.ts` — so this
     // sums the collection with no status filter.
     const [tips] = await TipModel.aggregate<{ total: number }>([
@@ -205,14 +217,23 @@ export const getChannel = createServerFn({ method: 'GET' })
       videos: videos.map((v) => {
         const visibility = v.visibility as VideoVisibility
         const premium = visibility === 'subscriber'
+        const payPerView = visibility === 'buyer'
         const requiredTierId = v.requiredTierId ? String(v.requiredTierId) : null
-        // The same two-part rule as `requirePlayableVideo`: subscribed at all, and
-        // then high enough on the ladder. The owner clears both by right — and a
-        // private row only reached here at all if they are the owner.
-        const unlocked =
-          !premium ||
-          isOwner ||
-          (subscribed && tierUnlocks(heldTier, tierRefOf(requiredTierId, ranks)))
+        // Two rules, matching the two arms of `requirePlayableVideo`:
+        //
+        // - `buyer`: bought it, or owns the channel. Its own branch is not optional —
+        //   the subscription rule below opens with `!premium`, which is true of every
+        //   non-`subscriber` video, so without this a pay-per-view row would render as
+        //   unlocked and clickable while the player correctly refused it.
+        // - `subscriber`: subscribed at all, and then high enough on the ladder.
+        //
+        // The owner clears both by right — and a private row only reached here at all
+        // if they are the owner.
+        const unlocked = payPerView
+          ? isOwner || purchasedIds.has(String(v._id))
+          : !premium ||
+            isOwner ||
+            (subscribed && tierUnlocks(heldTier, tierRefOf(requiredTierId, ranks)))
 
         return {
           id: String(v._id),
@@ -221,8 +242,10 @@ export const getChannel = createServerFn({ method: 'GET' })
           durationSeconds: v.durationSeconds,
           visibility,
           premium,
+          payPerView,
           unlocked,
           requiredTierId,
+          priceCents: payPerView ? (v.priceCents ?? null) : null,
           // Archived tiers are gone from the ladder but their gates still stand;
           // naming one is better than an unexplained lock, so fall back to the
           // subscription's own snapshot of the name where we have it.

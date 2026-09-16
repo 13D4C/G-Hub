@@ -146,7 +146,7 @@ export function TipButton({
  * What Stripe's redirect back is turned into — and where the tip is settled.
  *
  * Settling here as well as in the webhook is the difference between a tip that
- * survives a missed webhook and one that is silently lost: `settleTipSession` is the
+ * survives a missed webhook and one that is silently lost: `recordPaidSession` is the
  * same idempotent upsert either way, so whichever path arrives first records the
  * money and the other is a no-op. Without this the webhook is a single point of
  * failure on a path where failing means a creator is never paid.
