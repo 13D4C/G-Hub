@@ -60,6 +60,7 @@ export type ChannelVideo = {
   id: string
   title: string
   description: string
+  url: string
   durationSeconds: number
   visibility: VideoVisibility
   /** True for `visibility: 'subscriber'` — playable only by an active subscriber. */
@@ -80,6 +81,7 @@ export type ChannelView = {
   creatorId: string
   name: string
   description: string
+  avatarUrl: string
   /** The currency every tier on this channel is priced in. */
   currency: string
   /** True when the viewer has an active subscription, or is the creator. */
@@ -132,7 +134,7 @@ export const getChannel = createServerFn({ method: 'GET' })
     await connectToDatabase()
 
     const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName channelDescription channelCurrency')
+      .select('name channelName channelDescription channelCurrency avatarUrl')
       .lean()
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
@@ -157,7 +159,7 @@ export const getChannel = createServerFn({ method: 'GET' })
         uploadedBy: creator._id,
         ...(isOwner ? {} : { visibility: { $ne: 'private' } }),
       })
-        .select('title description durationSeconds visibility requiredTierId priceCents')
+        .select('title description durationSeconds visibility requiredTierId priceCents url')
         .sort({ createdAt: -1 })
         .limit(100)
         .lean(),
@@ -203,6 +205,7 @@ export const getChannel = createServerFn({ method: 'GET' })
       creatorId: String(creator._id),
       name: creator.channelName || creator.name || 'Untitled channel',
       description: creator.channelDescription ?? '',
+      avatarUrl: creator.avatarUrl || '',
       currency: creator.channelCurrency || 'usd',
       subscribed,
       status: sub?.status ?? 'none',
@@ -236,6 +239,7 @@ export const getChannel = createServerFn({ method: 'GET' })
           id: String(v._id),
           title: v.title,
           description: v.description,
+          url: unlocked ? v.url : '',
           durationSeconds: v.durationSeconds,
           visibility,
           premium,
