@@ -4,9 +4,22 @@ import { Lock, Play } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
 import { formatPrice } from '@/lib/channels'
-import type { listVideos } from '@/server/functions/videos'
+import type { VideoVisibility } from '@/lib/video-visibility'
 
-type VideoSummary = Awaited<ReturnType<typeof listVideos>>[number]
+export type VideoCardVideo = {
+  id: string
+  title: string
+  description: string
+  url?: string
+  durationSeconds: number
+  visibility: VideoVisibility
+  premium: boolean
+  payPerView: boolean
+  unlocked: boolean
+  priceCents: number | null
+  requiredTierName?: string
+  channel?: { creatorId: string; name: string; currency: string } | null
+}
 
 function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -60,10 +73,12 @@ function CardTarget({
   video,
   className,
   children,
+  hideChannelLink,
 }: {
-  video: VideoSummary
+  video: VideoCardVideo
   className?: string
   children: React.ReactNode
+  hideChannelLink?: boolean
 }) {
   if (video.unlocked || (video.payPerView && video.channel)) {
     return (
@@ -72,7 +87,7 @@ function CardTarget({
       </Link>
     )
   }
-  if (video.channel) {
+  if (video.channel && !hideChannelLink) {
     return (
       <Link to="/channel" search={{ id: video.channel.creatorId }} className={className}>
         {children}
@@ -85,9 +100,11 @@ function CardTarget({
 export function VideoCard({
   video,
   variant = 'grid',
+  hideChannelLink = false,
 }: {
-  video: VideoSummary
+  video: VideoCardVideo
   variant?: 'grid' | 'list'
+  hideChannelLink?: boolean
 }) {
   const locked = !video.unlocked
   const isGrid = variant === 'grid'
@@ -169,9 +186,9 @@ export function VideoCard({
       ? price
         ? `Buy for ${price} to watch`
         : 'Sold on its own'
-      : video.channel
+      : video.channel && !hideChannelLink
         ? `Subscribe to ${video.channel.name} to watch`
-        : 'Premium video'
+        : 'Subscribe to watch'
     : video.description
 
   return (
@@ -180,11 +197,12 @@ export function VideoCard({
       className={cn(
         'gap-0 overflow-hidden py-0 transition-transform',
         isGrid ? 'hover:-translate-y-1' : 'flex-row items-start gap-4 rounded-2xl p-3',
-        locked && !video.channel && 'opacity-90',
+        locked && !(video.channel && !hideChannelLink) && 'opacity-90',
       )}
     >
       <CardTarget
         video={video}
+        hideChannelLink={hideChannelLink}
         className={cn(
           'group relative block overflow-hidden bg-slate-900',
           isGrid ? 'aspect-video w-full' : 'aspect-video w-44 shrink-0 rounded-xl sm:w-52',
@@ -194,7 +212,7 @@ export function VideoCard({
       </CardTarget>
 
       <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
-        <CardTarget video={video}>
+        <CardTarget video={video} hideChannelLink={hideChannelLink}>
           <CardTitle
             className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}
           >
@@ -205,7 +223,7 @@ export function VideoCard({
         {/* The only way to reach a channel you do not already have a locked video
             from — without it, a creator who publishes nothing premium is
             unreachable from the catalogue. */}
-        {video.channel ? (
+        {video.channel && !hideChannelLink ? (
           <Link
             to="/channel"
             search={{ id: video.channel.creatorId }}

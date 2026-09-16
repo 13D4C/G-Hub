@@ -1,3 +1,4 @@
+import { FALLBACK_AVATAR } from '@/components/auth-nav'
 import { EmptyState } from '@/components/empty-state'
 import { VideoCard } from '@/components/video-card'
 import { VideoComments } from '@/components/video-comments'
@@ -133,16 +134,15 @@ function VideoPage() {
               <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
                 {playback.video.title}
               </h1>
-
               <Card className="flex flex-col gap-3 p-5">
-                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-                  <CalendarDays className="size-4" />
-                  Uploaded {formatDate(playback.video.createdAt)}
-                  {playback.channel ? <ChannelByline channel={playback.channel} /> : null}
-                </div>
+                {playback.channel ? <ChannelBadge channel={playback.channel} /> : null}
                 <p className="whitespace-pre-line text-sm text-slate-700">
                   {playback.video.description || 'No description provided.'}
                 </p>
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <CalendarDays className="size-4" />
+                  Uploaded {formatDate(playback.video.createdAt)}
+                </div>
                 <VideoInteractionBar videoId={playback.video.id} channel={playback.channel} />
                 <TipNotice tip={tip} sessionId={session_id} />
               </Card>
@@ -182,18 +182,20 @@ function VideoPage() {
 }
 
 /** Links a video back to the channel that published it. */
-function ChannelByline({ channel }: { channel: VideoChannel }) {
+function ChannelBadge({ channel }: { channel: VideoChannel }) {
   return (
-    <>
-      <span aria-hidden>·</span>
-      <Link
-        to="/channel"
-        search={{ id: channel.creatorId }}
-        className="font-semibold text-slate-600 underline-offset-4 hover:text-slate-900 hover:underline"
-      >
-        {channel.name}
-      </Link>
-    </>
+    <Link
+      to="/channel"
+      search={{ id: channel.creatorId }}
+      className="flex w-fit items-center gap-2.5 transition hover:opacity-80"
+    >
+      <img
+        src={channel.avatarUrl || FALLBACK_AVATAR}
+        alt=""
+        className="size-9 shrink-0 rounded-full object-cover ring-2 ring-white/20"
+      />
+      <span className="font-display text-sm font-semibold text-black">{channel.name}</span>
+    </Link>
   )
 }
 
@@ -285,11 +287,12 @@ function Paywall({
       </div>
 
       <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">{locked.title}</h1>
-      {locked.description ? (
-        <Card className="p-5">
-          <p className="whitespace-pre-line text-sm text-slate-700">{locked.description}</p>
-        </Card>
-      ) : null}
+      <Card className="flex flex-col gap-3 p-5">
+                {locked.channel ? <ChannelBadge channel={locked.channel} /> : null}
+                <p className="whitespace-pre-line text-sm text-slate-700">
+                  {locked.description || 'No description provided.'}
+                </p>
+      </Card>
     </div>
   )
 }

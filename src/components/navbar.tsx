@@ -38,7 +38,7 @@ export function Navbar({
 
           <div className="ml-auto flex shrink-0 items-center gap-3">
             <Button asChild className="gap-2 rounded-full">
-              <Link to="/upload">
+              <Link to="/dashboard">
                 <Upload className="size-4" />
                 Upload
               </Link>

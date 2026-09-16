@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
+import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { isSellablePrice } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES, type VideoVisibility } from '@/lib/video-visibility'
@@ -10,8 +11,10 @@ import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { MembershipTierModel } from '@/server/db/models/membership-tier'
 import { UserModel } from '@/server/db/models/user'
 import { VideoModel } from '@/server/db/models/video'
+import { VideoCommentModel } from '@/server/db/models/video-comment'
+import { VideoLikeModel } from '@/server/db/models/video-like'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
-import { uploadObject } from '@/server/storage/seaweed'
+import { deleteObject, keyFromPublicUrl, uploadObject } from '@/server/storage/seaweed'
 import {
   getChannelAccess,
   loadPurchasedVideoIds,
@@ -32,6 +35,7 @@ export type VideoChannel = {
   name: string
   /** What this creator prices in, so the tip dialog offers the right symbol. */
   currency: string
+  avatarUrl: string
 }
 
 function channelFrom(creator: {
@@ -39,11 +43,13 @@ function channelFrom(creator: {
   name?: string
   channelName?: string
   channelCurrency?: string
+  avatarUrl?: string
 }): VideoChannel {
   return {
     creatorId: String(creator._id),
     name: creator.channelName || creator.name || 'Untitled channel',
     currency: creator.channelCurrency || 'usd',
+    avatarUrl: creator.avatarUrl || '',
   }
 }
 
@@ -56,7 +62,9 @@ function channelFrom(creator: {
 async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
   if (!uploadedBy) return null
 
-  const creator = await UserModel.findById(uploadedBy).select('name channelName channelCurrency').lean()
+  const creator = await UserModel.findById(uploadedBy)
+    .select('name channelName channelCurrency avatarUrl')
+    .lean()
   return creator ? channelFrom(creator) : null
 }
 
@@ -106,7 +114,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
   // CastError that takes the whole home page down.
   const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
   const creators = await UserModel.find({ _id: { $in: creatorIds } })
-    .select('name channelName channelCurrency')
+    .select('name channelName channelCurrency avatarUrl')
     .lean()
   const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
 
@@ -313,48 +321,6 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
     }
   })
 
-export type MyVideo = {
-  id: string
-  title: string
-  description: string
-  url: string
-  durationSeconds: number
-  visibility: VideoVisibility
-  /** The tier gating it, or null for "any active subscriber". */
-  requiredTierId: string | null
-  /** What it sells for, or null when it is not a `buyer` video. */
-  priceCents: number | null
-  likeCount: number
-  shareCount: number
-  createdAt: string
-}
-
-export const listMyVideos = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<MyVideo[]> => {
-    const userId = await requireUserId()
-    await connectToDatabase()
-
-    const videos = await VideoModel.find({ uploadedBy: userId })
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean()
-
-    return videos.map((v) => ({
-      id: String(v._id),
-      title: v.title,
-      description: v.description,
-      url: v.url,
-      durationSeconds: v.durationSeconds,
-      visibility: v.visibility as VideoVisibility,
-      requiredTierId: v.requiredTierId ? String(v.requiredTierId) : null,
-      priceCents: v.priceCents ?? null,
-      likeCount: v.likeCount ?? 0,
-      shareCount: v.shareCount ?? 0,
-      createdAt: v.createdAt.toISOString(),
-    }))
-  },
-)
-
 export const createVideo = createServerFn({ method: 'POST' })
   .validator((data: unknown) => {
     if (!(data instanceof FormData)) throw new Error('Invalid form submission')
@@ -366,6 +332,11 @@ export const createVideo = createServerFn({ method: 'POST' })
     const file = data.get('file')
     const title = String(data.get('title') ?? '').trim()
     const description = String(data.get('description') ?? '').trim()
+    const requestedDuration = Number(String(data.get('durationSeconds') ?? '').trim())
+    const durationSeconds =
+      Number.isFinite(requestedDuration) && requestedDuration > 0
+        ? Math.round(requestedDuration)
+        : 0
     // Anything unrecognised falls back to `public` rather than rejecting, matching
     // how this handler already treats every other field it reads off the form.
     const requested = String(data.get('visibility') ?? '')
@@ -429,6 +400,7 @@ export const createVideo = createServerFn({ method: 'POST' })
       title,
       description,
       url,
+      durationSeconds,
       visibility,
       requiredTierId,
       priceCents,
@@ -438,6 +410,60 @@ export const createVideo = createServerFn({ method: 'POST' })
       // twice. A private one has no audience to advertise to.
       adsEnabled: visibility === 'public',
     })
+
+    return { id: String(video._id) }
+  })
+
+const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id')
+
+const updateVideoDetailsSchema = z.object({
+  videoId: objectId,
+  title: z.string().trim().min(1, VIDEO_ERRORS.titleRequired).max(200),
+  description: z.string().trim().max(5000),
+})
+
+export const updateVideoDetails = createServerFn({ method: 'POST' })
+  .validator(updateVideoDetailsSchema)
+  .handler(async ({ data }): Promise<{ id: string; title: string; description: string }> => {
+    const userId = await requireUserId()
+    await connectToDatabase()
+
+    const video = await VideoModel.findOneAndUpdate(
+      { _id: data.videoId, uploadedBy: userId },
+      { $set: { title: data.title, description: data.description } },
+    ).lean()
+    if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
+
+    return { id: String(video._id), title: data.title, description: data.description }
+  })
+
+const deleteVideoSchema = z.object({ videoId: objectId })
+
+export const deleteVideo = createServerFn({ method: 'POST' })
+  .validator(deleteVideoSchema)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const userId = await requireUserId()
+    await connectToDatabase()
+
+    const video = await VideoModel.findOneAndDelete({
+      _id: data.videoId,
+      uploadedBy: userId,
+    }).lean()
+    if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
+
+    await Promise.all([
+      VideoCommentModel.deleteMany({ videoId: video._id }),
+      VideoLikeModel.deleteMany({ videoId: video._id }),
+    ])
+
+    const key = keyFromPublicUrl(video.url)
+    if (key) {
+      try {
+        await deleteObject(key)
+      } catch (error) {
+        console.error(`Failed to delete storage object for video ${data.videoId}:`, error)
+      }
+    }
 
     return { id: String(video._id) }
   })

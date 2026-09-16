@@ -4,8 +4,7 @@ import { cn } from '@/lib/utils'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Home' },
-  { to: '/upload', label: 'Upload' },
-  { to: '/dashboard', label: 'Stats' },
+  { to: '/dashboard', label: 'Dashboard' },
 ] as const
 
 const PAPER_BACKGROUND: CSSProperties = {
