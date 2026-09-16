@@ -14,6 +14,7 @@ import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import { uploadObject } from '@/server/storage/seaweed'
 import { requirePlayableVideo, visibleToViewerFilter } from '@/server/lib/entitlement'
 import { channelFrom, summarizeVideosForViewer } from '@/server/lib/video-summary'
+import { recordWatch } from '@/server/lib/watch-history'
 import type { VideoChannel } from '@/lib/video-summary-types'
 
 /**
@@ -142,7 +143,16 @@ export const getVideoById = createServerFn({ method: 'GET' })
     // playable `url`, so a locked video never scores a view and no other caller has
     // to remember to increment. `$inc` rather than a read-modify-write so concurrent
     // viewers cannot overwrite each other.
-    await VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } })
+    //
+    // The per-viewer record rides along here for the same reason — a watch the feed
+    // can learn from is exactly a watch that was allowed to play. `recordWatch`
+    // swallows its own errors, which is what makes it safe to pair with the increment
+    // rather than risk a ranking signal failing a playback; and it writes nothing at
+    // all for an anonymous viewer, so this stays one query for them as before.
+    await Promise.all([
+      VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } }),
+      recordWatch(viewerId, video),
+    ])
 
     return {
       video: {
