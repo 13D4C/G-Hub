@@ -16,8 +16,8 @@ import {
   loadTierRanks,
   tierRefOf,
   tierStanding,
-  tierUnlocks,
 } from '@/server/lib/entitlement'
+import { isUnlocked } from '@/server/lib/video-unlock'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
@@ -219,21 +219,18 @@ export const getChannel = createServerFn({ method: 'GET' })
         const premium = visibility === 'subscriber'
         const payPerView = visibility === 'buyer'
         const requiredTierId = v.requiredTierId ? String(v.requiredTierId) : null
-        // Two rules, matching the two arms of `requirePlayableVideo`:
-        //
-        // - `buyer`: bought it, or owns the channel. Its own branch is not optional —
-        //   the subscription rule below opens with `!premium`, which is true of every
-        //   non-`subscriber` video, so without this a pay-per-view row would render as
-        //   unlocked and clickable while the player correctly refused it.
-        // - `subscriber`: subscribed at all, and then high enough on the ladder.
-        //
-        // The owner clears both by right — and a private row only reached here at all
-        // if they are the owner.
-        const unlocked = payPerView
-          ? isOwner || purchasedIds.has(String(v._id))
-          : !premium ||
-            isOwner ||
-            (subscribed && tierUnlocks(heldTier, tierRefOf(requiredTierId, ranks)))
+        // The shared catalogue rule, which `listVideos` also runs and
+        // `scripts/test-video-unlock.ts` checks without a database. This used to be a
+        // second hand-maintained copy of it, spelled differently enough that checking
+        // the two agreed meant reading both.
+        const unlocked = isUnlocked({
+          visibility,
+          isOwner,
+          subscribed,
+          heldTier,
+          requiredTier: tierRefOf(requiredTierId, ranks),
+          purchased: purchasedIds.has(String(v._id)),
+        })
 
         return {
           id: String(v._id),
