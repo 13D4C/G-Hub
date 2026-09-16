@@ -8,15 +8,20 @@ import { INTERACTION_ERRORS } from '../../lib/interaction-errors.ts'
 import { ChannelSubscriptionModel } from '../db/models/channel-subscription.ts'
 import { MembershipTierModel } from '../db/models/membership-tier.ts'
 import { VideoModel } from '../db/models/video.ts'
+import { VideoPurchaseModel } from '../db/models/video-purchase.ts'
 import { isEntitled, tierStanding } from './entitlement-status.ts'
 import { tierUnlocks, type TierRef } from './tier-access.ts'
 
 /**
  * Who is allowed to watch what. Every playback and interaction handler routes through
  * `requirePlayableVideo`, so the rules — public is open, `subscriber` needs a
- * subscription to that channel and the right tier, and `private` is the uploader's
- * alone — exist in exactly one place. A second copy is how a subscriber ends up able
- * to watch a video but not like it.
+ * subscription to that channel and the right tier, `buyer` needs a purchase of that
+ * one video, and `private` is the uploader's alone — exist in exactly one place. A
+ * second copy is how a subscriber ends up able to watch a video but not like it.
+ *
+ * The two paid states are alternatives, not a ladder. A subscription buys the
+ * `subscriber` videos of one channel; a purchase buys one `buyer` video outright.
+ * Neither opens the other, and only the creator clears both without paying.
  */
 
 // One import site for callers that only need the predicates.
@@ -127,13 +132,53 @@ export async function unlocksTier(
 }
 
 /**
+ * Whether this viewer has bought this one video.
+ *
+ * A purchase is permanent, so there is no period to compare — the row existing *is*
+ * the entitlement. Anonymous viewers own nothing, and answering that costs no query.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function hasPurchasedVideo(
+  viewerId: string | null,
+  videoId: string | Types.ObjectId,
+): Promise<boolean> {
+  if (!viewerId) return false
+  return !!(await VideoPurchaseModel.exists({ buyerId: viewerId, videoId }))
+}
+
+/**
+ * Which of these videos this viewer has bought, in one query — the purchase-side
+ * counterpart to `loadTierRanks`, and for the same reason: a catalogue page must not
+ * ask once per row.
+ *
+ * Assumes the caller has already connected to the database.
+ */
+export async function loadPurchasedVideoIds(
+  viewerId: string | null,
+  videoIds: Array<string | Types.ObjectId | null | undefined>,
+): Promise<Set<string>> {
+  if (!viewerId) return new Set()
+
+  const wanted = [...new Set(videoIds.filter(Boolean).map(String))]
+  if (wanted.length === 0) return new Set()
+
+  const rows = await VideoPurchaseModel.find({ buyerId: viewerId, videoId: { $in: wanted } })
+    .select('videoId')
+    .lean()
+  return new Set(rows.map((row) => String(row.videoId)))
+}
+
+/**
  * The video, if this viewer may watch it, plus their standing on its channel — the
  * caller needs the second answer to render the paywall and would otherwise re-query.
  *
  * A paywalled video and one behind a *higher* tier give different messages on
  * purpose. A `subscriber` video is a paywalled one, not a hidden one; and telling a
  * paying Silver subscriber to "subscribe" when they already have would read as a bug
- * rather than as an upsell.
+ * rather than as an upsell. A `buyer` video gets a third message for the same reason:
+ * its fix is a one-off purchase, and it is the one rejection a fully paid-up
+ * subscriber of the channel can still receive.
  *
  * A `private` video is the exception: it reports as missing rather than as locked.
  * There is nothing to sell, so a distinct message would only confirm to a stranger
@@ -150,6 +195,12 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
   // that is only true when the paywall forced it would be a lie the UI reads.
   const access = await getChannelAccess(viewerId, video.uploadedBy)
 
+  // Reported alongside the video because this function has already paid for the
+  // answer; a caller that wants to say "you own this" would otherwise re-query for
+  // something the gate just decided. Stays false for every visibility but `buyer`,
+  // which have their own notion of access.
+  let purchased = false
+
   if (video.visibility === 'private') {
     if (!access.isOwner) throw new Error(INTERACTION_ERRORS.videoNotFound)
   } else if (video.visibility === 'subscriber') {
@@ -157,9 +208,17 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
     if (!(await unlocksTier(access, video.requiredTierId))) {
       throw new Error(INTERACTION_ERRORS.tierRequired)
     }
+  } else if (video.visibility === 'buyer') {
+    // Deliberately does not consult `access.subscribed`. Pay-per-view is its own
+    // audience: a subscriber buys this video like anybody else, because the creator
+    // priced it separately from the membership and honouring the subscription here
+    // would give away the thing they just put a price on. The creator is the only
+    // bypass — they never pay for their own work.
+    purchased = access.isOwner || (await hasPurchasedVideo(viewerId, video._id))
+    if (!purchased) throw new Error(INTERACTION_ERRORS.purchaseRequired)
   }
 
-  return { video, ...access }
+  return { video, purchased, ...access }
 }
 
 /**
@@ -168,6 +227,10 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
  * Kept here beside the gate rather than inlined at each call site: a listing that
  * forgets it would leak a private video's title into the browsable grid, and
  * `requirePlayableVideo` would then refuse to play the thing it just advertised.
+ *
+ * `private` is the only state hidden here, and that is the decision rather than an
+ * omission. A `buyer` video belongs in the catalogue exactly as a `subscriber` one
+ * does: it is the shop window, and a paywall nobody can see is not a paywall.
  */
 export function visibleToViewerFilter(viewerId: string | null) {
   // `as const` matters: without it the literal widens to `string` and no longer

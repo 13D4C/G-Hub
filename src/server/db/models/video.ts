@@ -22,7 +22,10 @@ const videoSchema = new mongoose.Schema(
      *
      * - `public` — anyone, signed in or not.
      * - `subscriber` — an active subscriber of `uploadedBy`, narrowed further by
-     *   `requiredTierId` when one is set. This is the paywalled state.
+     *   `requiredTierId` when one is set.
+     * - `buyer` — whoever has bought this one video, permanently, for `priceCents`.
+     *   Sold per video rather than per channel, and deliberately not opened by a
+     *   subscription: the two paywalled states are alternatives, not a ladder.
      * - `private` — the uploader alone. Left out of every catalogue and reported as
      *   missing to everybody else, so it never advertises its own existence.
      *
@@ -46,6 +49,20 @@ const videoSchema = new mongoose.Schema(
       ref: 'membershipTier',
       default: null,
     },
+    /**
+     * What one permanent purchase of this video costs, in minor units of the
+     * creator's `channelCurrency`. Only consulted when `visibility` is `buyer`, and
+     * null for every other state — a price on a public video would be a rule nothing
+     * reads, exactly as a tier on one would be. The two write paths
+     * (`createVideo` and `updateVideoAccess`) clear it on the same discipline.
+     *
+     * No `min`/`max` here, for the same reason the counters below carry none:
+     * Mongoose validators do not run on update operators, so they would be inert
+     * against the `$set` in `updateVideoAccess` and would only imply a guarantee that
+     * isn't there. The real bounds live in `src/lib/video-price.ts` and are applied by
+     * both write paths.
+     */
+    priceCents: { type: Number, default: null },
     // Whether a preroll ad is served before this video.
     adsEnabled: { type: Boolean, default: true },
     // Denormalized from the `videolikes` collection, which stays the source of truth.

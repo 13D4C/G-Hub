@@ -14,6 +14,11 @@ export const CHANNEL_ERRORS = {
   cannotTipSelf: 'You cannot tip your own channel.',
   invalidTipAmount: 'Enter an amount between $0.50 and $5,000.',
 
+
+  // --- Pay-per-view ---
+  videoNotForSale: 'This video is not for sale.',
+  alreadyPurchased: 'You already own this video.',
+  cannotBuyOwnVideo: 'This is your own video.',
   // --- Membership tiers ---
   tierNotFound: 'That membership tier no longer exists.',
   tierLimitReached: 'You have reached the maximum number of membership tiers.',

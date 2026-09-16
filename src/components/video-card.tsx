@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { Lock, Play } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
+import { formatPrice } from '@/lib/channels'
 import type { listVideos } from '@/server/functions/videos'
 
 type VideoSummary = Awaited<ReturnType<typeof listVideos>>[number]
@@ -42,9 +43,14 @@ function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
 /**
  * Where the card's thumbnail and title point.
  *
- * A locked card is not a dead end — it is the shop window, so it links to the channel
- * selling the key. Only a premium video with no channel at all has nowhere to go, and
- * that one renders inert.
+ * A locked card is not a dead end — it is the shop window, so it links to wherever the
+ * key is sold. Which place that is depends on what is being sold: a `subscriber` video
+ * is bought on the channel page, alongside the ladder, while a `buyer` video is bought
+ * on its own page, where the price and the button live. Sending a pay-per-view card to
+ * the channel would offer a subscription that deliberately does not include it.
+ *
+ * Only a locked video with no channel at all has nowhere to go, and that one renders
+ * inert.
  *
  * The channel name is a separate link (see below), so this deliberately wraps only
  * part of the card: nesting an anchor inside an anchor is invalid HTML and browsers
@@ -59,7 +65,7 @@ function CardTarget({
   className?: string
   children: React.ReactNode
 }) {
-  if (video.unlocked) {
+  if (video.unlocked || (video.payPerView && video.channel)) {
     return (
       <Link to="/video" search={{ id: video.id }} className={className}>
         {children}
@@ -85,6 +91,12 @@ export function VideoCard({
 }) {
   const locked = !video.unlocked
   const isGrid = variant === 'grid'
+  // The price, once, for the overlay and the subtitle. Null when this is not a
+  // pay-per-view card, or when one somehow has no price to quote.
+  const price =
+    video.payPerView && video.priceCents !== null && video.channel
+      ? formatPrice(video.priceCents, video.channel.currency)
+      : null
 
   const thumbnail = (
     <>
@@ -94,7 +106,9 @@ export function VideoCard({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55">
           <Lock className={isGrid ? 'size-9 text-white/90' : 'size-6 text-white/90'} />
           {isGrid ? (
-            <span className="text-xs font-medium text-white/80">Subscribers only</span>
+            <span className="text-xs font-medium text-white/80">
+              {video.payPerView ? (price ?? 'Pay-per-view') : 'Subscribers only'}
+            </span>
           ) : null}
         </div>
       ) : (
@@ -124,7 +138,15 @@ export function VideoCard({
                 video.visibility === 'private' ? 'bg-slate-700/90' : 'bg-primary/90',
               )}
             >
-              {video.visibility === 'private' ? 'Private' : 'Premium'}
+              {/* Names what the video is, not what the viewer did to get it — this
+                  badge is drawn on the *unlocked* card, which for a `buyer` video
+                  means either a purchaser or the creator, and only one of those
+                  bought anything. */}
+              {video.visibility === 'private'
+                ? 'Private'
+                : video.visibility === 'buyer'
+                  ? 'Pay-per-view'
+                  : 'Premium'}
             </span>
           ) : null}
           {video.durationSeconds > 0 && (
@@ -143,9 +165,13 @@ export function VideoCard({
   )
 
   const subtitle = locked
-    ? video.channel
-      ? `Subscribe to ${video.channel.name} to watch`
-      : 'Premium video'
+    ? video.payPerView
+      ? price
+        ? `Buy for ${price} to watch`
+        : 'Sold on its own'
+      : video.channel
+        ? `Subscribe to ${video.channel.name} to watch`
+        : 'Premium video'
     : video.description
 
   return (

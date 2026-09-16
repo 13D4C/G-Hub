@@ -13,6 +13,11 @@ export const INTERACTION_ERRORS = {
   // behind. Distinct from `subscriptionRequired` because the fix is different: this
   // viewer is already paying and needs to upgrade, not to subscribe.
   tierRequired: 'This video needs a higher membership tier.',
+  // Pay-per-view video the viewer has not bought. Distinct from
+  // `subscriptionRequired` because the fix is a one-off purchase rather than a
+  // subscription — and a subscriber of this very channel gets this message too, since
+  // the two paywalled states are alternatives rather than a ladder.
+  purchaseRequired: 'Buy this video to watch it.',
   // Deliberately does not distinguish "gone" from "not yours" — never leak whether
   // another viewer's comment exists.
   commentNotFound: 'That comment no longer exists.',
