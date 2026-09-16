@@ -4,6 +4,7 @@ import { Lock, Play } from 'lucide-react'
 import { Card, CardDescription, CardTitle } from '@/components/ui/card'
 import { cn, formatDuration } from '@/lib/utils'
 import { formatPrice } from '@/lib/channels'
+import { feedReasonLabel } from '@/lib/feed-reason'
 import type { VideoSummary } from '@/lib/video-summary-types'
 
 function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
@@ -89,6 +90,7 @@ export function VideoCard({
 }) {
   const locked = !video.unlocked
   const isGrid = variant === 'grid'
+  const reasonLabel = video.reason ? feedReasonLabel(video.reason, video.channel?.name) : ''
   // The price, once, for the overlay and the subtitle. Null when this is not a
   // pay-per-view card, or when one somehow has no price to quote.
   const price =
@@ -192,6 +194,21 @@ export function VideoCard({
       </CardTarget>
 
       <div className={cn('min-w-0', isGrid ? 'flex flex-col gap-1.5 p-5' : 'flex-1 gap-1 py-1')}>
+        {/* Why the feed surfaced this row. Branching on the label rather than on
+            `video.reason` is what keeps the merely-recent case ('new', which has
+            nothing to explain) from needing a second condition here. Absent
+            entirely on `listVideos` rows, so the watch page's rail is unchanged. */}
+        {reasonLabel ? (
+          <span
+            className={cn(
+              'text-primary/80 font-medium tracking-wide uppercase',
+              isGrid ? 'text-xs' : 'text-[11px]',
+            )}
+          >
+            {reasonLabel}
+          </span>
+        ) : null}
+
         <CardTarget video={video}>
           <CardTitle
             className={cn('font-display line-clamp-2 text-slate-900', isGrid ? 'text-lg' : 'text-sm')}

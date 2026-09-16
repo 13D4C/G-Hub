@@ -1,13 +1,13 @@
 import { EmptyState } from '@/components/empty-state'
 import { Card } from '@/components/ui/card'
 import { VideoCard } from '@/components/video-card'
-import { listVideos } from '@/server/functions/videos'
+import { listFeed } from '@/server/functions/feed'
 import { createFileRoute } from '@tanstack/react-router'
 import { Waves } from 'lucide-react'
 
 export const Route = createFileRoute('/')({
   loader: async () => {
-    const videos = await listVideos()
+    const videos = await listFeed()
     return { videos }
   },
   component: HomePage,
