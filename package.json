@@ -26,6 +26,7 @@
     "test:dashboard": "node --experimental-strip-types scripts/test-dashboard.ts",
     "test:video-unlock": "node --experimental-strip-types scripts/test-video-unlock.ts",
     "test:feed-ranking": "node --experimental-strip-types scripts/test-feed-ranking.ts",
+    "test:revenue-series": "node --experimental-strip-types scripts/test-revenue-series.ts",
     "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts"
   },
   "dependencies": {
