@@ -1,6 +1,7 @@
 /**
- * Reconcile the `tips` and `videopurchases` collections against Stripe. The
- * counterpart to `recount-likes`: a way back to truth when the two disagree.
+ * Reconcile the `tips`, `videopurchases` and `subscriptioninvoices` collections
+ * against Stripe. The counterpart to `recount-likes`: a way back to truth when the
+ * two disagree.
  *
  * A one-time payment is normally recorded twice over — once when the viewer lands
  * back from Checkout, once when the webhook arrives — but both can be missed at the
@@ -9,9 +10,15 @@
  * credited; for a pay-per-view purchase it is worse, because the viewer paid for a
  * video that stays locked. This finds those and settles them.
  *
- * Idempotent, because it settles through the same `recordPaidSession` the webhook
- * uses: a clean run reports nothing to fix, which is also how you verify the live
- * paths are keeping up.
+ * Subscription revenue is swept too, through the same `recordSubscriptionInvoice`.
+ * A subscription charge is only ever recorded from an invoice — the
+ * `channelsubscription` row is a current-state mirror with no per-charge history — so
+ * a missed `invoice.paid` leaves the creator's subscription revenue reading zero
+ * while their subscriber count is right.
+ *
+ * Idempotent, because it settles through the same writers the webhook uses: a clean
+ * run reports nothing to fix, which is also how you verify the live paths are
+ * keeping up.
  *
  * Run:
  *   npm run settle-payments
@@ -20,7 +27,9 @@ import Stripe from 'stripe'
 import { connectToDatabase } from '../src/server/db/mongoose.ts'
 import { TipModel } from '../src/server/db/models/tip.ts'
 import { VideoPurchaseModel } from '../src/server/db/models/video-purchase.ts'
+import { SubscriptionInvoiceModel } from '../src/server/db/models/subscription-invoice.ts'
 import { recordPaidSession } from '../src/server/lib/payment-record.ts'
+import { recordSubscriptionInvoice } from '../src/server/lib/subscription-invoice-record.ts'
 
 /** How far back to look. Stripe expires an abandoned session after 24h anyway. */
 const LOOKBACK_DAYS = 30
@@ -42,8 +51,9 @@ async function main() {
     limit: 100,
     created: { gte: since },
   })) {
-    // Subscriptions settle through `syncSubscription`; only one-time payments land
-    // here, and only paid ones are money.
+    // Only one-time payments land in this loop, and only paid ones are money. A
+    // subscription's entitlement comes from `syncSubscription` and its revenue from
+    // the invoice sweep below — neither is a Checkout session row.
     if (session.mode !== 'payment' || session.payment_status !== 'paid') continue
     scanned += 1
 
@@ -67,12 +77,56 @@ async function main() {
     })
   }
 
-  if (settled.length === 0) {
+  // --- subscription invoices ---
+  let invoicesScanned = 0
+  const settledInvoices: Array<{ id: string; amountCents: number; currency: string }> = []
+
+  for await (const invoice of stripe.invoices.list({
+    limit: 100,
+    status: 'paid',
+    created: { gte: since },
+  })) {
+    // No subscription behind it means a one-off invoice, most likely from another
+    // integration sharing this Stripe account. Not ours to record.
+    if (!invoice.parent?.subscription_details) continue
+    // A zero-amount invoice — a trial, a full coupon, a $0 proration — is not revenue.
+    if ((invoice.amount_paid ?? 0) <= 0) continue
+    invoicesScanned += 1
+
+    if (await SubscriptionInvoiceModel.exists({ stripeInvoiceId: invoice.id })) continue
+
+    // By id rather than by the object in hand: the writer re-reads from Stripe so the
+    // webhook cannot be fed a forged body, and paying one extra retrieve on the rare
+    // missing invoice is cheaper than keeping two versions of this logic.
+    if (!(await recordSubscriptionInvoice(invoice.id))) continue
+
+    settledInvoices.push({
+      id: invoice.id ?? '(no id)',
+      amountCents: invoice.amount_paid,
+      currency: invoice.currency ?? 'usd',
+    })
+  }
+
+  for (const row of settledInvoices) {
     console.log(
-      `All ${scanned} paid one-time session(s) in the last ${LOOKBACK_DAYS} days are already recorded. Nothing to fix.`,
+      `settled subscription invoice ${row.id}: ${(row.amountCents / 100).toFixed(2)} ${row.currency.toUpperCase()}`,
+    )
+  }
+
+  if (settled.length === 0 && settledInvoices.length === 0) {
+    console.log(
+      `All ${scanned} paid one-time session(s) and ${invoicesScanned} paid invoice(s) in the last ${LOOKBACK_DAYS} days are already recorded. Nothing to fix.`,
     )
     return
   }
+
+  if (settledInvoices.length > 0) {
+    console.log(
+      `Settled ${settledInvoices.length} of ${invoicesScanned} paid subscription invoice(s).`,
+    )
+  }
+
+  if (settled.length === 0) return
 
   for (const row of settled) {
     console.log(

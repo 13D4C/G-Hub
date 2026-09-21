@@ -1,7 +1,17 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, Link, redirect } from '@tanstack/react-router'
-import { BarChart3, CloudUpload, Eye, Heart, Pencil, Ticket, Trash2, Users } from 'lucide-react'
+import {
+  BarChart3,
+  CloudUpload,
+  Eye,
+  Heart,
+  Pencil,
+  Ticket,
+  Trash2,
+  Users,
+  Wallet,
+} from 'lucide-react'
 import { EmptyState } from '@/components/empty-state'
 import { UploadVideoForm } from '@/components/upload-video-form'
 import { Button } from '@/components/ui/button'
@@ -104,6 +114,14 @@ function DashboardPage() {
             </Link>
           ) : null}
 
+          {/* Money questions bring creators here first; the detailed answer is one
+              page over. */}
+          <Button asChild variant="outline" size="lg" className="gap-2">
+            <Link to="/revenue">
+              <Wallet className="size-4" />
+              View revenue
+            </Link>
+          </Button>
           <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
             <DialogTrigger asChild>
               <Button size="lg" className="gap-2">
@@ -133,9 +151,16 @@ function DashboardPage() {
           icon={Users}
           label="Subscribers"
           value={formatCount(totals.subscribers)}
+          /*
+           * "Run rate", not revenue: this is what active subscriptions *would* bill in
+           * a month, summed from their current prices. The revenue page reports what
+           * Stripe actually invoiced, which is a different number — a subscription
+           * that started mid-month, lapsed, or was refunded makes the two disagree.
+           * Labelling both "revenue" would read as a bug in one of them.
+           */
           hint={
             totals.monthlyCents > 0
-              ? `${formatPrice(totals.monthlyCents, currency)} / month`
+              ? `${formatPrice(totals.monthlyCents, currency)} / month run rate`
               : undefined
           }
         />
