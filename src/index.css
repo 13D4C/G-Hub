@@ -24,6 +24,23 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /**
+   * The four revenue categories, in the fixed order `REVENUE_CATEGORIES` declares:
+   * Ad / Subscriptions / Pay-per-view / Tipping, with a fifth spare.
+   *
+   * Tuned for the light paper card the chart sits on rather than for the page's dark
+   * underwater base — nothing in this app ever applies the `.dark` class, so these
+   * `:root` values are the ones that actually render.
+   *
+   * Lightness descends 0.72 -> 0.62 -> 0.52 -> 0.42 across the four on purpose: the
+   * categories stay distinguishable in greyscale, in print and under colour vision
+   * deficiency, so the chart never encodes a category by hue alone.
+   */
+  --chart-1: oklch(0.72 0.15 75);
+  --chart-2: oklch(0.62 0.12 195);
+  --chart-3: oklch(0.52 0.19 300);
+  --chart-4: oklch(0.42 0.14 25);
+  --chart-5: oklch(0.55 0.02 250);
 }
 
 .dark {
@@ -45,6 +62,13 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  /* The same ramp lifted for a dark surface, kept for correctness: no code toggles
+     `.dark` today, so these are not what renders. */
+  --chart-1: oklch(0.86 0.16 82);
+  --chart-2: oklch(0.78 0.13 196);
+  --chart-3: oklch(0.72 0.18 302);
+  --chart-4: oklch(0.78 0.16 28);
+  --chart-5: oklch(0.7 0.02 250);
 }
 
 @theme inline {
@@ -71,6 +95,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 }
 
 @layer base {
