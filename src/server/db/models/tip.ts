@@ -39,6 +39,16 @@ const tipSchema = new mongoose.Schema(
   { timestamps: true },
 )
 
+// Every index must stay above `mongoose.model(...)`: indexes declared after the model
+// is compiled are silently dropped. Same warning as on `videoview`.
+
+/**
+ * How the revenue dashboard reads one channel's tips per month. The single-field
+ * `creatorId` index above is the prefix of this one and so is now redundant for
+ * reads, but dropping it is a migration with no upside — left in place deliberately.
+ */
+tipSchema.index({ creatorId: 1, createdAt: 1 })
+
 export type Tip = InferSchemaType<typeof tipSchema> & { _id: mongoose.Types.ObjectId }
 
 export const TipModel: Model<Tip> =
