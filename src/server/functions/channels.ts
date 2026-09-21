@@ -19,6 +19,7 @@ import {
 } from '@/server/lib/entitlement'
 import { isUnlocked } from '@/server/lib/video-unlock'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
+import { recordSubscriptionInvoice } from '@/server/lib/subscription-invoice-record'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
 /**
@@ -416,6 +417,22 @@ export const confirmChannelCheckout = createServerFn({ method: 'POST' })
     if (!subscriptionId) throw new Error(CHANNEL_ERRORS.checkoutNotComplete)
 
     await syncSubscription(subscriptionId)
+
+    // Record the first charge here too, not only from the `invoice.paid` webhook.
+    //
+    // Without this, subscription revenue is the one category with a single write
+    // path: a tip and a pay-per-view purchase both settle synchronously on the way
+    // back from Checkout (`confirmTip`, `confirmVideoPurchase`), so they appear on
+    // the revenue page immediately even with no webhook listener running, while a
+    // subscription would show nothing at all. That asymmetry reads as "subscriptions
+    // are broken" when what is actually missing is a forwarded event.
+    //
+    // `recordSubscriptionInvoice` re-reads the invoice from Stripe, ignores anything
+    // not actually paid, and upserts on the invoice id — so this is safe to run
+    // before the webhook, and the webhook settles the same row when it lands.
+    const invoiceId =
+      typeof session.invoice === 'string' ? session.invoice : (session.invoice?.id ?? null)
+    if (invoiceId) await recordSubscriptionInvoice(invoiceId)
 
     const sub = await ChannelSubscriptionModel.findOne({
       subscriberId,
