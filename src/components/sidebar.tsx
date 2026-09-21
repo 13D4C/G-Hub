@@ -8,6 +8,9 @@ const NAV_ITEMS = [
   { to: '/', label: 'Home', requiresAuth: false },
   { to: '/subscribed', label: 'Subscribed', requiresAuth: true },
   { to: '/dashboard', label: 'Dashboard', requiresAuth: false },
+  // Auth-gated, unlike Dashboard above: this one has nothing to show a signed-out
+  // visitor but a redirect, so it is hidden rather than offered and bounced.
+  { to: '/revenue', label: 'Revenue', requiresAuth: true },
 ] as const
 
 const PAPER_BACKGROUND: CSSProperties = {
