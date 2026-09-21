@@ -6,6 +6,7 @@ import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { isSellablePrice } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES, type VideoVisibility } from '@/lib/video-visibility'
+import { recordAdImpression } from '@/server/lib/ad-impression'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { MembershipTierModel } from '@/server/db/models/membership-tier'
@@ -191,9 +192,19 @@ export const getVideoById = createServerFn({ method: 'GET' })
     // swallows its own errors, which is what makes it safe to pair with the increment
     // rather than risk a ranking signal failing a playback; and it writes nothing at
     // all for an anonymous viewer, so this stays one query for them as before.
+    //
+    // The ad impression rides along for a third reason, stronger than the other two:
+    // this row is money. A client-callable endpoint for it would be a revenue-minting
+    // one — anybody with a session could loop it and inflate their own earnings — so
+    // choosing the ad and recording that it was chosen have to happen in the same
+    // server-side breath. The cost is this handler's existing looseness: a re-run of
+    // the `/video` loader counts again, bounded by a dedupe window for signed-in
+    // viewers and not at all for anonymous ones. That is one reason ad revenue is
+    // reported as an estimate rather than as settled money.
     await Promise.all([
       VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } }),
       recordWatch(viewerId, video),
+      preroll ? recordAdImpression(viewerId, video, preroll.id) : null,
     ])
 
     return {

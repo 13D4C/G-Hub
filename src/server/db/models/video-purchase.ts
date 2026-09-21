@@ -69,6 +69,12 @@ const videoPurchaseSchema = new mongoose.Schema(
  */
 videoPurchaseSchema.index({ buyerId: 1, videoId: 1 })
 
+/**
+ * How the revenue dashboard reads one channel's sales per month — the same shape as
+ * the tip index, because the two are aggregated identically.
+ */
+videoPurchaseSchema.index({ creatorId: 1, createdAt: 1 })
+
 export type VideoPurchase = InferSchemaType<typeof videoPurchaseSchema> & {
   _id: mongoose.Types.ObjectId
 }

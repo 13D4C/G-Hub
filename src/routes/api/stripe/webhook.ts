@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import type Stripe from 'stripe'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { settlePaidSession } from '@/server/lib/payment-settle'
+import { recordSubscriptionInvoice } from '@/server/lib/subscription-invoice-record'
 import { getStripe, getWebhookSecret } from '@/server/lib/stripe'
 import { syncSubscription } from '@/server/lib/subscription-sync'
 
@@ -14,9 +15,11 @@ import { syncSubscription } from '@/server/lib/subscription-sync'
  * Only `customer.subscription.*` and `checkout.session.completed` are handled, and
  * neither is trusted for its contents — both are treated purely as a nudge to
  * re-read the object from Stripe (see `syncSubscription` and `settlePaidSession`).
- * Invoice events are deliberately not handled: a failed payment moves the
- * subscription's status, which arrives here as `customer.subscription.updated`
- * anyway.
+ * `invoice.paid` is handled too, but only to record revenue: it is the one event
+ * that says a subscription charge was actually collected, which the subscription
+ * object cannot answer because `syncSubscription` overwrites it wholesale. A *failed*
+ * payment is still not handled here — it moves the subscription's status, which
+ * arrives as `customer.subscription.updated` anyway.
  *
  * `checkout.session.completed` covers all three products, split first on the
  * session's `mode`: `subscription` is a channel subscription, and `payment` is a
@@ -82,6 +85,19 @@ export const Route = createFileRoute('/api/stripe/webhook')({
         if (event.type === 'checkout.session.completed' && event.data.object.mode === 'payment') {
           await connectToDatabase()
           await settlePaidSession(event.data.object.id)
+          return new Response(null, { status: 204 })
+        }
+
+        // A subscription charge that actually settled. This must come before
+        // `subscriptionIdOf`, which returns null for invoice events — the event would
+        // otherwise fall through and 204 out silently, recording nothing.
+        //
+        // `syncSubscription` is deliberately not called here: the renewal also emits
+        // `customer.subscription.updated`, which the fallthrough below already handles
+        // and which is where `currentPeriodEnd` is refreshed.
+        if (event.type === 'invoice.paid') {
+          await connectToDatabase()
+          await recordSubscriptionInvoice(event.data.object.id)
           return new Response(null, { status: 204 })
         }
 
