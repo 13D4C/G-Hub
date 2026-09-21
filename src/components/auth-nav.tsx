@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
-import { BarChart3, LogOut, Tv } from 'lucide-react'
+import { BarChart3, LogOut, Tv, Wallet } from 'lucide-react'
 import { meQueryOptions } from '@/lib/auth'
 import { logout } from '@/server/functions/auth'
 
@@ -93,6 +93,15 @@ export function AuthNav() {
           >
             <BarChart3 className="size-4" />
             Creator dashboard
+          </Link>
+          <Link
+            to="/revenue"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-accent"
+          >
+            <Wallet className="size-4" />
+            Revenue
           </Link>
           <div className="-mx-1 my-1 h-px bg-border" />
           <button
