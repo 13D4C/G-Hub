@@ -73,7 +73,7 @@ async function ensureCreator() {
       channelDescription: 'Seeded demo channel for the subscription flow.',
       channelCurrency: 'usd',
     },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   )
 
   // Keyed on (creator, name) so re-seeding reprices the same tier rather than
@@ -81,7 +81,7 @@ async function ensureCreator() {
   const tier = await MembershipTierModel.findOneAndUpdate(
     { creatorId: creator._id, name: tierName },
     { creatorId: creator._id, name: tierName, priceCents, currency: 'usd', rank: 0, active: true },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   )
 
   console.log(
@@ -117,7 +117,7 @@ async function main() {
         { title },
         // Premium videos carry no preroll: the subscription is what replaces the ad.
         { title, url, visibility, adsEnabled: visibility === 'public', uploadedBy: creator._id },
-        { upsert: true, new: true },
+        { upsert: true, returnDocument: 'after' },
       )
       console.log(`${visibility === 'public' ? 'video' : 'premium video'} record ready: ${title}`)
     }
@@ -129,7 +129,7 @@ async function main() {
     await AdModel.findOneAndUpdate(
       { title },
       { title, mediaUrl: url, skippableAfterSeconds: 3, active: true, weight: 1 },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: 'after' },
     )
     console.log(`ad record ready: ${title}`)
   }

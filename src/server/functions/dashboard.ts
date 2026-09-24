@@ -9,6 +9,7 @@ import { VideoPurchaseModel } from '@/server/db/models/video-purchase'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-totals'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
+import type { TranscodeStatus } from '@/lib/transcode-status'
 import type { VideoVisibility } from '@/lib/video-visibility'
 
 /**
@@ -32,6 +33,14 @@ export type DashboardVideo = {
   viewCount: number
   likeCount: number
   shareCount: number
+  /**
+   * How far this video has got through transcoding. Creator-facing only — a viewer is
+   * never shown it, because the video plays in every one of these states.
+   *
+   * Null for a video uploaded before the pipeline existed. Those are not queued and will
+   * not become queued on their own; `npm run backfill:transcode` is what moves them in.
+   */
+  transcodeStatus: TranscodeStatus | null
   /** Tips sent from this video's page, in minor units. Channel donations are not here. */
   tipCents: number
   /** What this video has earned in pay-per-view sales, in minor units. */
@@ -67,7 +76,7 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
       readLadder(creatorId),
       VideoModel.find({ uploadedBy: creatorId })
         .select(
-          'title description durationSeconds visibility requiredTierId priceCents createdAt viewCount likeCount shareCount',
+          'title description durationSeconds visibility requiredTierId priceCents createdAt viewCount likeCount shareCount transcode.status',
         )
         .sort({ createdAt: -1 })
         .limit(100)
@@ -121,6 +130,7 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
         viewCount: v.viewCount ?? 0,
         likeCount: v.likeCount ?? 0,
         shareCount: v.shareCount ?? 0,
+        transcodeStatus: (v.transcode?.status as TranscodeStatus | undefined) ?? null,
         tipCents: tipCentsByVideo.get(String(v._id)) ?? 0,
         saleCents: salesByVideoId.get(String(v._id))?.total ?? 0,
         saleCount: salesByVideoId.get(String(v._id))?.count ?? 0,
