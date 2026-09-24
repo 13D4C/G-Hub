@@ -28,7 +28,18 @@
     "test:feed-ranking": "node --experimental-strip-types scripts/test-feed-ranking.ts",
     "test:revenue-series": "node --experimental-strip-types scripts/test-revenue-series.ts",
     "test:revenue-ledger": "node --env-file=.env --experimental-strip-types scripts/test-revenue-ledger.ts",
-    "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts"
+    "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts",
+    "test:transcode-status": "node --experimental-strip-types scripts/test-transcode-status.ts",
+    "test:transcode-plan": "node --experimental-strip-types scripts/test-transcode-plan.ts",
+    "set-bucket-cors": "node --env-file=.env --experimental-strip-types scripts/set-bucket-cors.ts",
+    "test:transcode-claim": "node --env-file=.env --experimental-strip-types scripts/test-transcode-claim.ts",
+    "transcode-one": "node --env-file=.env --experimental-strip-types scripts/transcode-one.ts",
+    "transcode-worker": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts",
+    "transcode-worker:once": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts --once",
+    "test:video-sources": "node --experimental-strip-types scripts/test-video-sources.ts",
+    "test:video-quality": "node --experimental-strip-types scripts/test-video-quality.ts",
+    "backfill:transcode": "node --env-file=.env --experimental-strip-types scripts/backfill-transcode.ts",
+    "backfill:transcode:apply": "node --env-file=.env --experimental-strip-types scripts/backfill-transcode.ts --apply"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",

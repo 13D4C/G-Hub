@@ -23,6 +23,11 @@ import { AdImpressionModel } from '../db/models/ad-impression.ts'
  */
 const DEDUPE_WINDOW_MS = 30 * 60 * 1000
 
+/** Mongo's duplicate-key error, raised here by the sparse unique index on `dedupeKey`. */
+function isDuplicateKeyError(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 11000
+}
+
 /**
  * Records that this viewer was shown this ad on this video.
  *
@@ -68,8 +73,12 @@ export async function recordAdImpression(
         : {}),
     })
   } catch (error) {
-    // E11000 lands here on a repeat inside the window and is the expected path, not a
-    // failure. Logged all the same: a flood of them would mean the window is wrong.
+    // E11000 is the expected path, not a failure: the second view of a video inside
+    // the window is *supposed* to hit the unique index and write nothing. It is not
+    // logged, because `getVideoById` re-runs on every reload and back navigation, so
+    // logging it produced a steady flood that buried the failures worth reading.
+    // Anything else is a real write failure and is still reported.
+    if (isDuplicateKeyError(error)) return
     console.error('recordAdImpression failed', error)
   }
 }
