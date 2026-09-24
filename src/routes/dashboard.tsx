@@ -32,7 +32,11 @@ import { meQueryOptions, describeMutationError } from '@/lib/auth'
 import { formatPrice } from '@/lib/channels'
 import { dashboardQueryOptions, formatCount } from '@/lib/dashboard'
 import { myMembershipTiersQueryOptions } from '@/lib/membership-tiers'
-import { formatDate, formatDuration } from '@/lib/utils'
+import { cn, formatDate, formatDuration } from '@/lib/utils'
+import {
+  TRANSCODE_STATUS_LABELS,
+  type TranscodeStatus,
+} from '@/lib/transcode-status'
 import {
   VIDEO_PRICE_DEFAULT_CENTS,
   VIDEO_PRICE_MAX_CENTS,
@@ -261,6 +265,7 @@ function VideoRow({
         <Link to="/video" search={{ id: video.id }} className="hover:underline">
           {video.title}
         </Link>
+        <TranscodeBadge status={video.transcodeStatus} />
       </td>
       <td className="px-5 py-3">
         <VideoAccessControls video={video} tiers={tiers} field="visibility" />
@@ -585,5 +590,47 @@ function VideoPriceInput({
         </span>
       ) : null}
     </div>
+  )
+}
+
+/**
+ * The transcode state of one video, or nothing at all when it is `ready`.
+ *
+ * Silence is correct for the normal case — a creator does not need telling that the pipeline
+ * did what it always does, and a badge on every row would be noise on a table that is mostly
+ * about money. The other states each say something actionable or at least explanatory, and
+ * none of them means the video is unavailable: it plays from the original upload throughout.
+ */
+function TranscodeBadge({ status }: { status: TranscodeStatus | null }) {
+  if (status === 'ready') return null
+
+  // Never queued: uploaded before the pipeline existed, and it will not join the queue by
+  // itself. Worth saying rather than leaving blank, because it is the one state a creator
+  // can do something about — `npm run backfill:transcode` is what moves these in.
+  if (status === null) {
+    return (
+      <span
+        className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 align-middle text-[10px] font-medium text-slate-500"
+        title="Uploaded before adaptive streaming existed. It plays from the original file; run the transcode backfill to prepare renditions."
+      >
+        Not prepared
+      </span>
+    )
+  }
+
+  const tone =
+    status === 'failed'
+      ? 'bg-rose-50 text-rose-700'
+      : status === 'skipped'
+        ? 'bg-slate-100 text-slate-600'
+        : 'bg-amber-50 text-amber-700'
+
+  return (
+    <span
+      className={cn('ml-2 rounded px-1.5 py-0.5 align-middle text-[10px] font-medium', tone)}
+      title="Adaptive streaming quality. The video plays from the original upload regardless."
+    >
+      {TRANSCODE_STATUS_LABELS[status]}
+    </span>
   )
 }
