@@ -129,7 +129,13 @@ function VideoPage() {
       <div className="flex flex-col gap-4">
         {playback ? (
           <>
-            <VideoPlayer src={playback.video.url} preroll={playback.preroll} />
+            <VideoPlayer
+              src={playback.video.url}
+              hlsUrl={playback.video.hlsUrl}
+              dashUrl={playback.video.dashUrl}
+              transcodeStatus={playback.video.transcodeStatus}
+              preroll={playback.preroll}
+            />
             <div className="flex flex-col gap-4">
               <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
                 {playback.video.title}

@@ -35,7 +35,9 @@
     "test:transcode-claim": "node --env-file=.env --experimental-strip-types scripts/test-transcode-claim.ts",
     "transcode-one": "node --env-file=.env --experimental-strip-types scripts/transcode-one.ts",
     "transcode-worker": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts",
-    "transcode-worker:once": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts --once"
+    "transcode-worker:once": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts --once",
+    "test:video-sources": "node --experimental-strip-types scripts/test-video-sources.ts",
+    "test:video-quality": "node --experimental-strip-types scripts/test-video-quality.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
