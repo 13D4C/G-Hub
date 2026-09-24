@@ -13,9 +13,12 @@ import { formatPrice } from '@/lib/channels'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { commentsQueryOptions, interactionSummaryQueryOptions } from '@/lib/interactions'
 import { formatDate } from '@/lib/utils'
+import { isTranscodeSettled, TRANSCODE_VIEWER_NOTES } from '@/lib/transcode-status'
+import { transcodeStatusQueryOptions } from '@/lib/video-transcode'
 import { getLockedVideo, getVideoById, listVideos } from '@/server/functions/videos'
 import type { LockedVideo, PlaybackData, VideoChannel } from '@/server/functions/videos'
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { CalendarDays, Droplets, Lock } from 'lucide-react'
 import { z } from 'zod'
 
@@ -136,6 +139,7 @@ function VideoPage() {
               transcodeStatus={playback.video.transcodeStatus}
               preroll={playback.preroll}
             />
+            <TranscodeNotice video={playback.video} />
             <div className="flex flex-col gap-4">
               <h1 className="font-display text-xl font-semibold text-white sm:text-2xl">
                 {playback.video.title}
@@ -299,6 +303,62 @@ function Paywall({
                   {locked.description || 'No description provided.'}
                 </p>
       </Card>
+    </div>
+  )
+}
+
+/**
+ * Tells a viewer why the video they are watching has no quality options yet, and offers the
+ * adaptive version once there is one.
+ *
+ * Informational, never a blocker: the original upload plays throughout, so there is nothing
+ * here to wait for and nothing is disabled while it works.
+ *
+ * Two deliberate restraints. It polls its own endpoint rather than invalidating the route
+ * loader — the loader hands `<VideoPlayer>` its props, and re-running it mid-playback would
+ * rebuild the player and replay the preroll ad, which is the same reason the loader keeps
+ * interaction data out of its own payload. And when the transcode lands it offers a button
+ * instead of switching sources underneath the viewer: swapping the source restarts the video
+ * from zero, which is a worse thing to do to someone than making them wait for the next
+ * visit. The button says so.
+ */
+function TranscodeNotice({ video }: { video: PlaybackData['video'] }) {
+  const router = useRouter()
+
+  const { data } = useQuery(
+    transcodeStatusQueryOptions(video.id, {
+      status: video.transcodeStatus,
+      hlsUrl: video.hlsUrl,
+      dashUrl: video.dashUrl,
+    }),
+  )
+
+  const status = data?.status ?? video.transcodeStatus
+
+  // `status &&` rather than a bare call: a null status means this video was never queued,
+  // which is settled in the sense that nothing will change on its own, and there is nothing
+  // to tell a viewer about a video that is simply playing.
+  if (status && !isTranscodeSettled(status)) {
+    return (
+      <p aria-live="polite" className="text-xs text-slate-300">
+        {TRANSCODE_VIEWER_NOTES[status]}
+      </p>
+    )
+  }
+
+  // Ready, but only since this page loaded — the player is still holding the urls the loader
+  // gave it, which were empty at the time.
+  const readySinceLoad = status === 'ready' && !video.hlsUrl && !video.dashUrl
+  if (!readySinceLoad) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <p aria-live="polite" className="text-xs text-slate-300">
+        Adaptive quality is ready.
+      </p>
+      <Button type="button" size="xs" variant="outline" onClick={() => router.invalidate()}>
+        Restart in adaptive quality
+      </Button>
     </div>
   )
 }
