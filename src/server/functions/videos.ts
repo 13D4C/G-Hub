@@ -1,11 +1,13 @@
 import { createServerFn } from '@tanstack/react-start'
 import { randomUUID } from 'node:crypto'
+import { Types } from 'mongoose'
 import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { VIDEO_ERRORS } from '@/lib/video-errors'
 import { isSellablePrice } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES, type VideoVisibility } from '@/lib/video-visibility'
+import { type TranscodeStatus } from '@/lib/transcode-status'
 import { recordAdImpression } from '@/server/lib/ad-impression'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
@@ -15,7 +17,12 @@ import { VideoModel } from '@/server/db/models/video'
 import { VideoCommentModel } from '@/server/db/models/video-comment'
 import { VideoLikeModel } from '@/server/db/models/video-like'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
-import { deleteObject, keyFromPublicUrl, uploadObject } from '@/server/storage/seaweed'
+import {
+  deleteObject,
+  deletePrefix,
+  keyFromPublicUrl,
+  uploadObject,
+} from '@/server/storage/seaweed'
 import {
   loadSubscribedCreatorIds,
   requirePlayableVideo,
@@ -23,6 +30,7 @@ import {
   type ChannelAccess,
 } from '@/server/lib/entitlement'
 import { channelFrom, summarizeVideosForViewer } from '@/server/lib/video-summary'
+import { safeFileName } from '@/server/lib/transcode-plan'
 import { recordWatch } from '@/server/lib/watch-history'
 import type { VideoChannel, VideoSummary } from '@/lib/video-summary-types'
 
@@ -134,7 +142,33 @@ export type PlaybackData = {
     id: string
     title: string
     description: string
+    /**
+     * The original upload. Handed out exactly as before, and still what plays whenever the
+     * adaptive manifests below are absent — which is every video until its transcode
+     * finishes, and every video whose transcode failed.
+     */
     url: string
+    /**
+     * The HLS master playlist and the DASH manifest, both empty until the transcode is
+     * ready. Released by the same gate as the url above: the paywall works by withholding
+     * addresses, so a manifest is exactly as much of a secret as the file it describes.
+     */
+    hlsUrl: string
+    dashUrl: string
+    /**
+     * Where the transcode is, so the page can say why quality options are missing rather
+     * than leave a dead control on screen.
+     *
+     * Never decides whether the video plays. A viewer who reached this payload has already
+     * cleared the paywall, and the original file is playable in every one of these states.
+     *
+     * Null for a video that is not in the pipeline at all — everything uploaded before it
+     * existed. That is a different thing from `pending`, and conflating them was a lie the
+     * UI told: a legacy row has no `transcode` field, so the claim query can never match it
+     * and it would have sat reading "Queued" forever. `npm run backfill:transcode` is what
+     * moves those into the queue, deliberately as a separate decision.
+     */
+    transcodeStatus: TranscodeStatus | null
     durationSeconds: number
     createdAt: string
   }
@@ -213,6 +247,13 @@ export const getVideoById = createServerFn({ method: 'GET' })
         title: video.title,
         description: video.description,
         url: video.url,
+        // Optional throughout, and not defensively: `.lean()` does not apply schema
+        // defaults, so a video uploaded before this pipeline existed really does come
+        // back with the whole `transcode` path missing. Empty manifests and a `pending`
+        // status describe that row correctly — it plays from `url`, as it always has.
+        hlsUrl: video.transcode?.hlsUrl ?? '',
+        dashUrl: video.transcode?.dashUrl ?? '',
+        transcodeStatus: (video.transcode?.status as TranscodeStatus | undefined) ?? null,
         durationSeconds: video.durationSeconds,
         createdAt: video.createdAt.toISOString(),
       },
@@ -224,6 +265,44 @@ export const getVideoById = createServerFn({ method: 'GET' })
       owned: purchased,
       requiredTierName: await tierNameOf(video.requiredTierId),
       preroll,
+    }
+  })
+
+const transcodeStatusSchema = z.object({ videoId: z.string() })
+
+export type VideoTranscodeStatus = {
+  /** Null for a video that was never queued — see the note on `PlaybackData`. */
+  status: TranscodeStatus | null
+  hlsUrl: string
+  dashUrl: string
+}
+
+/**
+ * How far a video has got through transcoding, and the manifests once it is done.
+ *
+ * Exists because the watch page needs to poll, and `getVideoById` must never be polled.
+ * That handler is the only path that hands out a playable url, so it is also where a view
+ * is counted, a watch-history row is written and an ad impression is minted — deliberately,
+ * per the comment above it. Polling it every few seconds per open tab would inflate the
+ * view count and, worse, the ad revenue the `/revenue` page reports. This reads the same
+ * fields and writes nothing at all.
+ *
+ * Gated identically all the same. The manifests are addresses of public-read objects, so
+ * handing them to somebody who has not cleared the paywall would open the video to them as
+ * surely as handing over `url` would.
+ */
+export const getVideoTranscodeStatus = createServerFn({ method: 'GET' })
+  .validator(transcodeStatusSchema)
+  .handler(async ({ data }): Promise<VideoTranscodeStatus> => {
+    const viewerId = await getUserId()
+    await connectToDatabase()
+
+    const { video } = await requirePlayableVideo(data.videoId, viewerId)
+
+    return {
+      status: (video.transcode?.status as TranscodeStatus | undefined) ?? null,
+      hlsUrl: video.transcode?.hlsUrl ?? '',
+      dashUrl: video.transcode?.dashUrl ?? '',
     }
   })
 
@@ -346,11 +425,22 @@ export const createVideo = createServerFn({ method: 'POST' })
       : null
     if (requestedTierId && !requiredTierId) throw new Error(CHANNEL_ERRORS.tierNotYours)
 
+    // Minted here rather than left to `create` below, so the key can be built from it:
+    // the original and every rendition the transcoder later writes then live under one
+    // `videos/{id}/` prefix, which is what lets `deleteVideo` sweep them in a single pass.
+    const videoId = new Types.ObjectId()
+    // The random segment is what protects a paywalled video. These objects are stored
+    // public-read, so an unguessable key is the only thing between a `buyer` video and
+    // anyone who can read the id out of a `/video?id=` URL — which is everybody. The key
+    // has always bought that obscurity with a UUID; this keeps it while giving the video
+    // a prefix of its own. `safeFileName` stops the uploader's own filename from
+    // escaping that prefix, which until now it could.
+    const key = `videos/${videoId}/${randomUUID()}/${safeFileName(file.name)}`
     const body = new Uint8Array(await file.arrayBuffer())
-    const key = `videos/${randomUUID()}-${file.name}`
     const url = await uploadObject({ key, body, contentType: file.type })
 
     const video = await VideoModel.create({
+      _id: videoId,
       title,
       description,
       url,
@@ -410,13 +500,23 @@ export const deleteVideo = createServerFn({ method: 'POST' })
       VideoLikeModel.deleteMany({ videoId: video._id }),
     ])
 
-    const key = keyFromPublicUrl(video.url)
-    if (key) {
-      try {
-        await deleteObject(key)
-      } catch (error) {
-        console.error(`Failed to delete storage object for video ${data.videoId}:`, error)
+    // A video is a tree now, not an object: the original upload, plus a manifest and every
+    // segment of every rendition. `keyFromPublicUrl` answers for one object, so it stays
+    // only as the fallback for rows uploaded before the per-video prefix existed, whose
+    // source sits outside the tree.
+    //
+    // Still best-effort and still after the delete: the row is already gone, and a storage
+    // failure here must not fail a delete the database has committed.
+    try {
+      const prefix = `videos/${video._id}/`
+      await deletePrefix(prefix)
+
+      const legacyKey = keyFromPublicUrl(video.url)
+      if (legacyKey && !legacyKey.startsWith(prefix)) {
+        await deleteObject(legacyKey)
       }
+    } catch (error) {
+      console.error(`Failed to delete storage objects for video ${data.videoId}:`, error)
     }
 
     return { id: String(video._id) }
