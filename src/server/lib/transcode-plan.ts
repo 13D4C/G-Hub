@@ -213,13 +213,21 @@ export function buildTranscodeArgs(input: TranscodeArgsInput): string[] {
   // with -2, which rounds to an even number — H.264's 4:2:0 chroma requires it, and a
   // 1919x1081 source fails without it. The stated axis is the short edge, so portrait and
   // landscape swap which axis that is.
+  //
+  // Every rung is then pinned to the source's display aspect ratio with setdar. The DASH
+  // muxer refuses to write a manifest whose adaptation set mixes aspect ratios, and that
+  // rounding produces exactly such a mix: 426x240 is 1.775 while 640x360 is 1.778. When the
+  // source carries sample-aspect metadata, scale compensates on its own; when it does not —
+  // OBS screen recordings are the common case — each rung falls back to its raw pixel ratio
+  // and the whole encode fails at the header. setdar adjusts each rung's pixel shape so
+  // they all display at the source's ratio, a sub-pixel difference nobody can see.
   const labels = rungs.map((_, i) => `o${i}`)
   const splits = rungs.map((_, i) => `[v${i}]`).join('')
   const scales = rungs
     .map((rung, i) => {
       const target = evenDimension(rung.height)
       const geometry = portrait ? `w=${target}:h=-2` : `w=-2:h=${target}`
-      return `[v${i}]scale=${geometry}[${labels[i]}]`
+      return `[v${i}]scale=${geometry},setdar=${width}/${height}[${labels[i]}]`
     })
     .join(';')
 
