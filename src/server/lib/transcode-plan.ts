@@ -40,11 +40,50 @@ export const DEFAULT_FPS = 30
 export const MAX_ATTEMPTS = 3
 
 /**
- * How long a claim is held before another worker may take the job. Short, with the worker
- * renewing it while ffmpeg runs: a container killed mid-encode is then re-claimable in
- * minutes rather than hours, and nothing has to notice it died.
+ * How long a claim is held before another worker may take the job, by default. Short, with
+ * the worker renewing it while ffmpeg runs: a container killed mid-encode is then
+ * re-claimable in minutes rather than hours, and nothing has to notice it died.
+ *
+ * Overridable with TRANSCODE_LEASE_SECONDS, which is mostly worth doing in development:
+ * restarting the dev server mid-encode leaves the video waiting out the whole lease.
  */
-export const LEASE_MS = 5 * 60_000
+export const DEFAULT_LEASE_MS = 5 * 60_000
+
+/**
+ * The shortest lease accepted. Below this a renewal is a database round-trip racing a
+ * clock measured in seconds, and a single slow one would abort an encode that was going
+ * perfectly well — the lease exists to detect dead workers, not to punish slow networks.
+ */
+export const MIN_LEASE_MS = 30_000
+
+/** The first retry delay, by default; each later one is five times the last. */
+export const DEFAULT_RETRY_BASE_MS = 60_000
+
+/**
+ * How often a worker renews its lease while encoding: a fifth of the lease, so four renewals
+ * can go missing before the lease actually runs out.
+ *
+ * Derived rather than configured separately, because the two must never drift: a heartbeat
+ * slower than the lease means every long encode loses its own claim and aborts itself. At
+ * the default lease this is the minute it has always been.
+ */
+export function heartbeatMsFor(leaseMs: number): number {
+  return Math.max(5_000, Math.floor(leaseMs / 5))
+}
+
+/**
+ * Read a duration setting given in seconds, as milliseconds.
+ *
+ * Anything unusable — absent, blank, not a number, negative — falls back to the default
+ * rather than throwing: a typo in .env should leave the worker running at its normal pace,
+ * not stop it transcoding. A value below the floor is raised to it.
+ */
+export function secondsSetting(raw: string | undefined, fallbackMs: number, minMs = 0): number {
+  if (raw === undefined || raw.trim() === '') return fallbackMs
+  const seconds = Number(raw)
+  if (!Number.isFinite(seconds) || seconds < 0) return fallbackMs
+  return Math.max(minMs, Math.round(seconds * 1000))
+}
 
 export type ProbeResult = {
   /** Raw stream dimensions, before rotation is applied. */
@@ -108,10 +147,18 @@ export function gopFramesFor(fps: number, segmentSeconds: number = SEGMENT_SECON
   return Math.max(1, rounded * segmentSeconds)
 }
 
-/** Backoff before a failed video may be claimed again: 1 min, 5 min, 25 min, capped at 1h. */
-export function backoffMsFor(attempts: number): number {
+/**
+ * Backoff before a failed video may be claimed again: the base, then five times it, then
+ * twenty-five times, capped at an hour. With the default base that is 1, 5 and 25 minutes.
+ *
+ * The growth is for failures that clear up by themselves — storage refusing writes for a
+ * while — where retrying at once only repeats the failure. It does nothing for a failure
+ * that is the same every time, like a bug in the encode; that is what transcode-one is for,
+ * and what a low TRANSCODE_RETRY_BASE_SECONDS is for while developing.
+ */
+export function backoffMsFor(attempts: number, baseMs: number = DEFAULT_RETRY_BASE_MS): number {
   const n = Math.max(1, Math.floor(attempts))
-  return Math.min(60 * 60_000, 60_000 * 5 ** (n - 1))
+  return Math.min(60 * 60_000, Math.max(0, baseMs) * 5 ** (n - 1))
 }
 
 /**
