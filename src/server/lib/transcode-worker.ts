@@ -13,20 +13,18 @@ import {
   claimNextVideo,
   completeTranscode,
   failTranscode,
+  leaseMs,
   makeWorkerId,
   renewClaim,
+  retryBaseMs,
   skipTranscode,
   type ClaimedVideo,
 } from './transcode-queue.ts'
 import { connectToDatabase } from '../db/mongoose.ts'
 import { hasFfmpeg } from './ffmpeg.ts'
+import { backoffMsFor, heartbeatMsFor } from './transcode-plan.ts'
 import { transcodeVideo, TranscodeSkipped } from './transcode-runner.ts'
 
-/**
- * How often the lease is pushed out during an encode. Comfortably inside `LEASE_MS`, so a
- * single slow renewal does not cost a worker a job it is actively encoding.
- */
-const HEARTBEAT_MS = 60_000
 
 /** Idle poll interval, jittered so several workers do not wake together forever. */
 const POLL_MS = 15_000
@@ -51,6 +49,8 @@ function concurrency(): number {
 async function processClaimed(video: ClaimedVideo, workerId: string): Promise<void> {
   const controller = new AbortController()
 
+  // The interval is derived from the lease rather than fixed, so shortening the lease cannot
+  // leave the heartbeat slower than it — which would make every long encode abort itself.
   const heartbeat = setInterval(() => {
     renewClaim(video.id, workerId)
       .then((held) => {
@@ -64,7 +64,7 @@ async function processClaimed(video: ClaimedVideo, workerId: string): Promise<vo
         // be briefly unreachable. Let the encode continue; if the lease really has lapsed,
         // the guarded writes at the end refuse it anyway.
       })
-  }, HEARTBEAT_MS)
+  }, heartbeatMsFor(leaseMs()))
 
   try {
     const result = await transcodeVideo({
@@ -181,7 +181,15 @@ export function startTranscodeWorker(): WorkerHandle {
       return
     }
 
-    console.log(`[transcode] worker ${workerId} started`)
+    // The timings in force, because they are configurable and a slow retry is otherwise
+    // indistinguishable from a stuck one.
+    const lease = leaseMs()
+    const retry = retryBaseMs()
+    console.log(
+      `[transcode] worker ${workerId} started — lease ${lease / 1000}s, renewed every ` +
+        `${heartbeatMsFor(lease) / 1000}s; failed videos retry after ${retry / 1000}s, ` +
+        `then ${backoffMsFor(2, retry) / 1000}s`,
+    )
     void tick()
   })()
 

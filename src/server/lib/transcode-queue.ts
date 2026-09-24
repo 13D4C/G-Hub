@@ -16,12 +16,33 @@
 import { randomUUID } from 'node:crypto'
 import { hostname } from 'node:os'
 import { VideoModel } from '../db/models/video.ts'
-import { backoffMsFor, LEASE_MS, MAX_ATTEMPTS } from './transcode-plan.ts'
+import {
+  backoffMsFor,
+  DEFAULT_LEASE_MS,
+  DEFAULT_RETRY_BASE_MS,
+  MAX_ATTEMPTS,
+  MIN_LEASE_MS,
+  secondsSetting,
+} from './transcode-plan.ts'
 
 /** The states a worker may take over: queued, or held by a lease that has run out. */
 // `as const` matters here for the same reason it does in `entitlement.ts`: without it the
 // literals widen to `string` and no longer satisfy Mongoose's typed filter for the enum.
 const CLAIMABLE = ['pending', 'processing'] as const
+
+/**
+ * The lease in force: TRANSCODE_LEASE_SECONDS, or five minutes. Read on each call, like the
+ * rest of this app's environment, so a process without the setting still runs at the
+ * defaults and nothing has to be loaded at import time.
+ */
+export function leaseMs(): number {
+  return secondsSetting(process.env.TRANSCODE_LEASE_SECONDS, DEFAULT_LEASE_MS, MIN_LEASE_MS)
+}
+
+/** The first retry delay in force: TRANSCODE_RETRY_BASE_SECONDS, or a minute. */
+export function retryBaseMs(): number {
+  return secondsSetting(process.env.TRANSCODE_RETRY_BASE_SECONDS, DEFAULT_RETRY_BASE_MS)
+}
 
 export type ClaimedVideo = {
   id: string
@@ -64,7 +85,7 @@ export async function claimNextVideo(workerId: string): Promise<ClaimedVideo | n
     {
       $set: {
         'transcode.status': 'processing',
-        'transcode.nextAttemptAt': new Date(now.getTime() + LEASE_MS),
+        'transcode.nextAttemptAt': new Date(now.getTime() + leaseMs()),
         'transcode.workerId': workerId,
         // A fresh output path per attempt, so a retry cannot interleave its segments with
         // those of an attempt that died halfway. Random rather than derived from the video
@@ -103,7 +124,7 @@ export async function claimNextVideo(workerId: string): Promise<ClaimedVideo | n
 export async function renewClaim(videoId: string, workerId: string): Promise<boolean> {
   const result = await VideoModel.updateOne(
     { _id: videoId, 'transcode.workerId': workerId, 'transcode.status': 'processing' },
-    { $set: { 'transcode.nextAttemptAt': new Date(Date.now() + LEASE_MS) } },
+    { $set: { 'transcode.nextAttemptAt': new Date(Date.now() + leaseMs()) } },
   )
 
   return result.matchedCount > 0
@@ -175,7 +196,7 @@ export async function failTranscode(
     {
       $set: {
         'transcode.status': giveUp ? 'failed' : 'pending',
-        'transcode.nextAttemptAt': new Date(Date.now() + backoffMsFor(attempts)),
+        'transcode.nextAttemptAt': new Date(Date.now() + backoffMsFor(attempts, retryBaseMs())),
         'transcode.error': message.slice(0, 500),
         'transcode.finishedAt': giveUp ? new Date() : null,
       },

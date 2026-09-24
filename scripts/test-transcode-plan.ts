@@ -21,11 +21,15 @@ import {
   backoffMsFor,
   buildTranscodeArgs,
   contentTypeFor,
+  DEFAULT_LEASE_MS,
   displayDimensions,
   gopFramesFor,
+  heartbeatMsFor,
   ladderForProbe,
+  MIN_LEASE_MS,
   parseFrameRate,
   safeFileName,
+  secondsSetting,
   SEGMENT_SECONDS,
   type ProbeResult,
 } from '../src/server/lib/transcode-plan.ts'
@@ -294,12 +298,45 @@ assert.equal(
 // --- retry arithmetic --------------------------------------------------------------
 
 {
-  const delays = [1, 2, 3, 4, 5].map(backoffMsFor)
+  // Called through a lambda on purpose: `.map(backoffMsFor)` would pass the array index as
+  // the base delay, and every "retry" would then be zero, one or two milliseconds.
+  const delays = [1, 2, 3, 4, 5].map((attempt) => backoffMsFor(attempt))
   for (let i = 1; i < delays.length; i += 1) {
     assert.ok(delays[i] >= delays[i - 1], 'backoff never shortens between attempts')
   }
   assert.equal(backoffMsFor(1), 60_000, 'the first retry waits a minute')
   assert.ok(delays.every((d) => d <= 60 * 60_000), 'and no retry is ever pushed out past an hour')
+}
+
+// A configured base scales the whole curve rather than only the first step.
+assert.equal(backoffMsFor(1, 10_000), 10_000, 'a 10s base retries after 10s')
+assert.equal(backoffMsFor(2, 10_000), 50_000, 'and then after 50s')
+assert.equal(backoffMsFor(1, 0), 0, 'a zero base retries immediately — the attempt cap still bounds it')
+assert.equal(backoffMsFor(1, -5_000), 0, 'a negative base cannot schedule into the past')
+
+// --- settings read from the environment -------------------------------------------
+
+// Anything unusable falls back rather than throwing: a typo in .env should leave the worker
+// transcoding at its normal pace, not stop it.
+for (const raw of [undefined, '', '   ', 'abc', '-5', 'NaN']) {
+  assert.equal(secondsSetting(raw, 60_000), 60_000, `${JSON.stringify(raw)} falls back to the default`)
+}
+assert.equal(secondsSetting('10', 60_000), 10_000, 'seconds are converted to milliseconds')
+assert.equal(secondsSetting('0.5', 60_000), 500, 'fractions are allowed')
+assert.equal(secondsSetting('0', 60_000), 0, 'zero is a value, not an absence')
+assert.equal(secondsSetting('5', 60_000, 30_000), 30_000, 'a value below the floor is raised to it')
+
+// --- the heartbeat can never fall behind the lease ---------------------------------
+
+{
+  // If a worker renewed its lease less often than the lease lasts, every long encode would
+  // lose its own claim partway through and abort itself. Checked across every lease the
+  // settings can produce, since the heartbeat is derived rather than configured.
+  for (const lease of [MIN_LEASE_MS, 45_000, 60_000, 120_000, DEFAULT_LEASE_MS, 60 * 60_000]) {
+    const beat = heartbeatMsFor(lease)
+    assert.ok(beat * 4 < lease, `a ${lease / 1000}s lease survives three missed renewals (beat ${beat / 1000}s)`)
+  }
+  assert.equal(heartbeatMsFor(DEFAULT_LEASE_MS), 60_000, 'the default heartbeat is the minute it has always been')
 }
 
 // --- file names, which reach both a storage key and a temp path --------------------
