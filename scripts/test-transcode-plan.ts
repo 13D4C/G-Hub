@@ -138,6 +138,33 @@ assert.deepEqual(
   '270 degrees is a quarter turn too',
 )
 
+// --- aspect ratio: one ratio across the whole ladder --------------------------------
+
+{
+  // The DASH muxer refuses to write a manifest whose adaptation set mixes aspect ratios,
+  // and even-rounded widths produce exactly that mix (426x240 is 1.775, 640x360 is 1.778).
+  // A source with sample-aspect metadata is compensated by scale on its own; one without —
+  // an OBS screen recording, which is how this was found — fails at the header unless every
+  // rung is pinned explicitly. Checked per rung, because one unpinned rung is enough.
+  const cases: Array<[string, ProbeResult, string]> = [
+    ['landscape', probe({ width: 1920, height: 1080 }), 'setdar=1920/1080'],
+    ['portrait', probe({ width: 1080, height: 1920 }), 'setdar=1080/1920'],
+    ['rotated', probe({ width: 1920, height: 1080, rotation: -90 }), 'setdar=1080/1920'],
+  ]
+
+  for (const [name, source, expected] of cases) {
+    const graph = valueAfter(buildTranscodeArgs({ sourcePath: '/s', outputDir: '/o', probe: source }), '-filter_complex') ?? ''
+    const rungFilters = graph.split(';').slice(1)
+    assert.equal(rungFilters.length, ladderForProbe(source).length, `${name}: one filter chain per rung`)
+    for (const chain of rungFilters) {
+      assert.ok(
+        chain.includes(`,${expected}[`),
+        `${name}: every rung is pinned to the displayed ratio, got ${chain}`,
+      )
+    }
+  }
+}
+
 // --- frame rate and keyframes ------------------------------------------------------
 
 assert.ok(Math.abs(parseFrameRate('30000/1001') - 29.97) < 0.01, 'NTSC rational parses')
