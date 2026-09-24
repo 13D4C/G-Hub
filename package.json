@@ -29,7 +29,8 @@
     "test:revenue-series": "node --experimental-strip-types scripts/test-revenue-series.ts",
     "test:revenue-ledger": "node --env-file=.env --experimental-strip-types scripts/test-revenue-ledger.ts",
     "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts",
-    "test:transcode-status": "node --experimental-strip-types scripts/test-transcode-status.ts"
+    "test:transcode-status": "node --experimental-strip-types scripts/test-transcode-status.ts",
+    "test:transcode-plan": "node --experimental-strip-types scripts/test-transcode-plan.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
