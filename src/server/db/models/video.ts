@@ -4,6 +4,23 @@ import mongoose, { type InferSchemaType, type Model } from 'mongoose'
 // this model under plain `node --experimental-strip-types`, which resolves neither
 // tsconfig paths nor extensionless specifiers.
 import { VIDEO_VISIBILITIES } from '../../../lib/video-visibility.ts'
+import { TRANSCODE_STATUSES } from '../../../lib/transcode-status.ts'
+
+/**
+ * One rung of the ladder as it was actually encoded.
+ *
+ * Its own schema rather than an inline object literal, because that is the only
+ * spelling Mongoose reads `_id: false` from — written inline, `_id` becomes a *path*
+ * of type `false` and every rendition carries a pointless ObjectId of its own.
+ *
+ * The player never reads this: the manifest carries the same facts and is the runtime
+ * source of truth, so this is allowed to be approximate. It exists so a maintenance
+ * script can describe what a video produced without fetching and parsing a manifest.
+ */
+const renditionSchema = new mongoose.Schema(
+  { width: Number, height: Number, bitrateKbps: Number },
+  { _id: false },
+)
 
 const videoSchema = new mongoose.Schema(
   {
@@ -84,11 +101,95 @@ const videoSchema = new mongoose.Schema(
     // Incremented by `recordShare`. Shares are anonymous, so unlike likes there is no
     // per-viewer document to store and no per-viewer state to render.
     shareCount: { type: Number, default: 0 },
+    /**
+     * Where this video is in the HLS/DASH pipeline, and what the pipeline produced.
+     *
+     * Embedded rather than a `transcodejob` collection because the relationship is 1:1
+     * and every read that plays a video is already a read of this — the player needs it
+     * to choose a source. A separate collection would add a query to the playback path
+     * and a fourth cascade to `deleteVideo` that a crash could orphan. It would start
+     * paying only if a second kind of job appeared, or if an operator screen needed
+     * per-attempt history.
+     *
+     * Absent entirely on every video uploaded before this pipeline, and that absence is
+     * load-bearing: a missing `transcode` means "plain MP4, play `url`", so this ships
+     * without touching a single existing row and `npm run backfill:transcode` opts them
+     * in afterwards. Read it with optional chaining — `.lean()` does not apply defaults,
+     * so a legacy row really does come back with the whole path missing.
+     */
+    transcode: {
+      /**
+       * `pending`    — queued; claimable once `nextAttemptAt` has passed.
+       * `processing` — a worker holds a lease on it that expires at `nextAttemptAt`.
+       * `ready`      — `hlsUrl`/`dashUrl` are playable.
+       * `failed`     — out of attempts. The MP4 keeps playing and no viewer is blocked.
+       * `skipped`    — deliberately not transcoded (over the size cap, or unreadable).
+       *                Distinct from `failed` so `--reset-failed` does not sweep it up.
+       *
+       * Never consulted by the paywall. `requirePlayableVideo` is the only authority on
+       * who may watch, and it does not read this.
+       */
+      status: { type: String, enum: TRANSCODE_STATUSES, default: 'pending' },
+      /**
+       * When this row becomes claimable again — one field doing three jobs, which is the
+       * point. It is the initial queue position, the lease expiry while a worker holds
+       * it, and the backoff delay after a failure. A worker killed mid-encode therefore
+       * needs no reaper: its lease simply runs out and the claim query matches the row
+       * again.
+       */
+      nextAttemptAt: { type: Date, default: Date.now },
+      /**
+       * Incremented on *claim*, not on failure. A worker killed by the OOM reaper or by
+       * a redeploy never gets to record its own failure, so counting claims is the only
+       * version of this that terminates a crash loop.
+       */
+      attempts: { type: Number, default: 0 },
+      /**
+       * Who holds the lease. Every write that finishes a job is conditioned on it, so a
+       * worker whose lease expired mid-encode cannot overwrite the result of the worker
+       * that took the job over.
+       */
+      workerId: { type: String, default: '' },
+      /**
+       * The random path segment this attempt's output lives under, inside
+       * `videos/{_id}/`. Minted fresh by every claim.
+       *
+       * Random rather than derived from the video id, and that is a security decision
+       * rather than a naming one. Objects are stored `public-read`, so for a paywalled
+       * video the unguessable key *is* what protects the bytes. A predictable
+       * `videos/{_id}/stream/master.m3u8` is derivable from the id in the `/video?id=`
+       * URL every visitor already sees, which would hand away every `buyer` and
+       * `subscriber` video. `createVideo` has always bought that obscurity with a UUID
+       * in the key; this keeps it.
+       *
+       * A fresh segment per attempt also means a retry cannot interleave its output with
+       * a dead attempt's — the old tree is simply orphaned, and swept on the next success.
+       */
+      prefix: { type: String, default: '' },
+      /** The HLS master playlist. Empty until `ready`. */
+      hlsUrl: { type: String, default: '' },
+      /** The DASH manifest. Points at the same CMAF segments the HLS playlists do. */
+      dashUrl: { type: String, default: '' },
+      /** What the ladder actually produced, for operator reporting. */
+      renditions: { type: [renditionSchema], default: [] },
+      /**
+       * Probed from the file rather than taken from the form. `createVideo` reads
+       * `durationSeconds` off client-supplied FormData and believes it; once a video has
+       * been probed these are the honest numbers, and the worker corrects the top-level
+       * `durationSeconds` with the probed one.
+       */
+      sourceWidth: { type: Number, default: 0 },
+      sourceHeight: { type: Number, default: 0 },
+      /** The last failure, truncated. Operator-facing only; never shown to a viewer. */
+      error: { type: String, default: '' },
+      startedAt: { type: Date, default: null },
+      finishedAt: { type: Date, default: null },
+    },
   },
   { timestamps: true },
 )
 
-// Both indexes must stay above `mongoose.model(...)`: indexes declared after the
+// Every index must stay above `mongoose.model(...)`: indexes declared after the
 // model is compiled are silently dropped. Same warning as on `videolike`.
 
 /**
@@ -111,6 +212,19 @@ videoSchema.index({ uploadedBy: 1, createdAt: -1 })
  * The feed's recency window reads through the same index.
  */
 videoSchema.index({ createdAt: -1 })
+
+/**
+ * The transcode worker's claim: the oldest row whose lease or backoff has expired.
+ *
+ * Leading field is `status` because the claim matches `$in: ['pending', 'processing']`
+ * — two point values, which Mongo serves as two index scans merged in
+ * `transcode.nextAttemptAt` order, so this one index serves the sort as well as the
+ * filter. Without it the claim is a collection scan on every poll of every worker.
+ *
+ * Deliberately not a partial index on the two live states: a claim query that silently
+ * stopped using its index would be worse than an index carrying some settled rows.
+ */
+videoSchema.index({ 'transcode.status': 1, 'transcode.nextAttemptAt': 1 })
 
 export type Video = InferSchemaType<typeof videoSchema> & { _id: mongoose.Types.ObjectId }
 

@@ -28,7 +28,8 @@
     "test:feed-ranking": "node --experimental-strip-types scripts/test-feed-ranking.ts",
     "test:revenue-series": "node --experimental-strip-types scripts/test-revenue-series.ts",
     "test:revenue-ledger": "node --env-file=.env --experimental-strip-types scripts/test-revenue-ledger.ts",
-    "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts"
+    "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts",
+    "test:transcode-status": "node --experimental-strip-types scripts/test-transcode-status.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
