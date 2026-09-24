@@ -31,7 +31,8 @@
     "test:watch-history": "node --env-file=.env --experimental-strip-types scripts/test-watch-history.ts",
     "test:transcode-status": "node --experimental-strip-types scripts/test-transcode-status.ts",
     "test:transcode-plan": "node --experimental-strip-types scripts/test-transcode-plan.ts",
-    "set-bucket-cors": "node --env-file=.env --experimental-strip-types scripts/set-bucket-cors.ts"
+    "set-bucket-cors": "node --env-file=.env --experimental-strip-types scripts/set-bucket-cors.ts",
+    "test:transcode-claim": "node --env-file=.env --experimental-strip-types scripts/test-transcode-claim.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1124.0",
