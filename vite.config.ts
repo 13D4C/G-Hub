@@ -11,7 +11,7 @@ export default defineConfig({
     // tanstackStart() registers Vite's `ssr` environment and must come before
     // both nitro() (which consumes it) and react().
     tanstackStart(),
-    nitro({ plugins: ['./src/server/plugins/db.ts'] }),
+    nitro({ plugins: ['./src/server/plugins/db.ts', './src/server/plugins/transcode.ts'] }),
     react(),
   ],
 })

@@ -1,5 +1,10 @@
-import { HeadContent, Link, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
+import { useState } from 'react'
+import { HeadContent, Scripts, createRootRouteWithContext } from '@tanstack/react-router'
 import appCss from '@/index.css?url'
+import { Navbar } from '@/components/navbar'
+import { PaperFlyout } from '@/components/sidebar'
+import { WaterRippleLayer } from '@/components/water-ripple'
+import { meQueryOptions } from '@/lib/auth'
 import type { QueryClient } from '@tanstack/react-query'
 
 interface MyRouterContext {
@@ -15,28 +20,31 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
+  // Resolve the session once per navigation so the header and the auth route
+  // guards read the same cached `me` result.
+  loader: ({ context }) => context.queryClient.ensureQueryData(meQueryOptions),
   shellComponent: RootDocument,
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+
   return (
     <html lang="en">
       <head>
         <HeadContent />
       </head>
       <body>
-        <div className="min-h-svh flex flex-col">
-          <header className="border-b">
-            <nav className="mx-auto flex max-w-4xl items-center gap-4 px-4 py-3">
-              <Link to="/" className="font-semibold [&.active]:text-primary">
-                G-Hub
-              </Link>
-              <Link to="/video" className="text-muted-foreground [&.active]:text-foreground">
-                Video
-              </Link>
-            </nav>
-          </header>
-          <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8">{children}</main>
+        <div className="bg-underwater-base flex min-h-full flex-col text-slate-100">
+          <WaterRippleLayer />
+          <div className="relative z-10 flex flex-1 flex-col">
+            <Navbar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen((v) => !v)} />
+
+            <div className="flex min-h-0 flex-1">
+              <PaperFlyout open={sidebarOpen} />
+              <main className="mx-auto w-full max-w-375 min-w-0 flex-1 px-4 py-4">{children}</main>
+            </div>
+          </div>
         </div>
         <Scripts />
       </body>
