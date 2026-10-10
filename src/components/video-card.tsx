@@ -31,6 +31,12 @@ function VideoThumbnail({ src, blurred }: { src: string; blurred?: boolean }) {
       muted
       playsInline
       preload="metadata"
+      // A preview frame, never a file to take away: no "Save video as", no download or
+      // cast control, no picture-in-picture.
+      controlsList="nodownload noremoteplayback"
+      disablePictureInPicture
+      disableRemotePlayback
+      onContextMenu={(event) => event.preventDefault()}
       className={cn(
         'h-full w-full object-cover transition-transform duration-500 group-hover:scale-105',
         blurred && 'scale-110 blur-lg',
