@@ -5,7 +5,6 @@ import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { TIP_MAX_CENTS, TIP_MIN_CENTS } from '@/lib/tips'
 import { requireUserId } from '@/server/auth/require-user'
 import { users, videos } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
 import { PAYMENT_KIND_TIP } from '@/server/lib/payment-kind'
 import { settlePaidSession } from '@/server/lib/payment-settle'
@@ -48,8 +47,6 @@ export const startTipCheckout = createServerFn({ method: 'POST' })
   .validator(tipSchema)
   .handler(async ({ data }): Promise<{ url: string }> => {
     const supporterId = await requireUserId()
-    await connectToDatabase()
-
     if (supporterId === data.creatorId) throw new Error(CHANNEL_ERRORS.cannotTipSelf)
     if (data.amountCents < TIP_MIN_CENTS || data.amountCents > TIP_MAX_CENTS) {
       throw new Error(CHANNEL_ERRORS.invalidTipAmount)
@@ -126,6 +123,5 @@ export const confirmTip = createServerFn({ method: 'POST' })
   .validator(confirmTipSchema)
   .handler(async ({ data }): Promise<void> => {
     await requireUserId()
-    await connectToDatabase()
     await settlePaidSession(data.sessionId)
   })

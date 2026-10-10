@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { COMMENT_MAX_LENGTH, INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { users, videoComments, videoLikes, videos } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { requirePlayableVideo } from '@/server/lib/entitlement'
 
 /**
@@ -69,7 +68,6 @@ export const getVideoInteractions = createServerFn({ method: 'GET' })
   .validator(videoIdSchema)
   .handler(async ({ data }): Promise<InteractionSummary> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     const [commentCount, viewerLike] = await Promise.all([
@@ -103,7 +101,6 @@ export const toggleVideoLike = createServerFn({ method: 'POST' })
   .validator(videoIdSchema)
   .handler(async ({ data }): Promise<{ liked: boolean; likeCount: number }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, userId)
 
     const videoId = video.id
@@ -170,7 +167,6 @@ export const listComments = createServerFn({ method: 'GET' })
   .validator(listCommentsSchema)
   .handler(async ({ data }): Promise<CommentPage> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     // Keyset, not skip/limit: `_id` descending is effectively newest-first and is
@@ -211,7 +207,6 @@ export const createComment = createServerFn({ method: 'POST' })
   .validator(createCommentSchema)
   .handler(async ({ data }): Promise<CommentDto> => {
     const userId = await requireUserId()
-    await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, userId)
 
     const comment = await videoComments.create(video.id, userId, data.body)
@@ -239,8 +234,6 @@ export const updateComment = createServerFn({ method: 'POST' })
   .validator(updateCommentSchema)
   .handler(async ({ data }): Promise<{ id: string; body: string; editedAt: string }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
-
     const editedAt = new Date()
     const updated = await videoComments.updateOwn(data.commentId, userId, data.body, editedAt)
     if (!updated) throw new Error(INTERACTION_ERRORS.commentNotFound)
@@ -256,8 +249,6 @@ export const deleteComment = createServerFn({ method: 'POST' })
   .validator(commentIdSchema)
   .handler(async ({ data }): Promise<{ id: string; videoId: string }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
-
     const deleted = await videoComments.deleteOwn(data.commentId, userId)
     if (!deleted) throw new Error(INTERACTION_ERRORS.commentNotFound)
 
@@ -273,8 +264,6 @@ export const recordShare = createServerFn({ method: 'POST' })
   .validator(videoIdSchema)
   .handler(async ({ data }): Promise<{ shareCount: number }> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
-
     // Gated like every other interaction: a premium video's share link is only worth
     // anything to someone who can already watch it.
     const { video } = await requirePlayableVideo(data.videoId, viewerId)

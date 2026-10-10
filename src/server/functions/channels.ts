@@ -10,7 +10,6 @@ import {
   users,
   videos as videoRepo,
 } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 import {
   isEntitled,
@@ -135,8 +134,6 @@ export const getChannel = createServerFn({ method: 'GET' })
   .validator(channelIdSchema)
   .handler(async ({ data }): Promise<ChannelView> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
-
     const creator = await users.findById(data.creatorId)
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
@@ -271,8 +268,6 @@ export const updateChannelSettings = createServerFn({ method: 'POST' })
   .validator(channelSettingsSchema)
   .handler(async ({ data }): Promise<{ ok: true }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
-
     await users.updateProfile(userId, data)
     return { ok: true }
   })
@@ -296,8 +291,6 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
   .validator(checkoutSchema)
   .handler(async ({ data }): Promise<{ url: string }> => {
     const subscriberId = await requireUserId()
-    await connectToDatabase()
-
     if (subscriberId === data.creatorId) throw new Error(CHANNEL_ERRORS.cannotSubscribeToSelf)
 
     const creator = await users.findById(data.creatorId)
@@ -382,8 +375,6 @@ export const confirmChannelCheckout = createServerFn({ method: 'POST' })
   .validator(confirmSchema)
   .handler(async ({ data }): Promise<{ subscribed: boolean }> => {
     const subscriberId = await requireUserId()
-    await connectToDatabase()
-
     const user = await users.findById(subscriberId)
     const session = await getStripe().checkout.sessions.retrieve(data.sessionId)
 
@@ -434,8 +425,6 @@ export const openBillingPortal = createServerFn({ method: 'POST' })
   .validator(channelIdSchema)
   .handler(async ({ data }): Promise<{ url: string }> => {
     const subscriberId = await requireUserId()
-    await connectToDatabase()
-
     const user = await users.findById(subscriberId)
     if (!user?.stripeCustomerId) throw new Error(CHANNEL_ERRORS.noSubscription)
 

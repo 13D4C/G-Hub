@@ -12,7 +12,6 @@ import {
   TIER_NAME_MAX_LENGTH,
 } from '@/server/db/models/membership-tier'
 import { DuplicateTierName, membershipTiers, users, videos } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 
 /**
@@ -52,7 +51,6 @@ export type { MembershipTierView }
 export const listMyMembershipTiers = createServerFn({ method: 'GET' }).handler(
   async (): Promise<Array<MembershipTierView>> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
     return readLadder(creatorId)
   },
 )
@@ -84,8 +82,6 @@ export const createMembershipTier = createServerFn({ method: 'POST' })
   .validator(tierInputSchema)
   .handler(async ({ data }): Promise<{ id: string }> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const live = await membershipTiers.countActiveByCreator(creatorId)
     if (live >= MAX_TIERS_PER_CREATOR) throw new Error(CHANNEL_ERRORS.tierLimitReached)
 
@@ -124,8 +120,6 @@ export const updateMembershipTier = createServerFn({ method: 'POST' })
   .validator(updateTierSchema)
   .handler(async ({ data }): Promise<{ id: string }> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const { tierId, ...fields } = data
 
     let updated
@@ -155,8 +149,6 @@ export const archiveMembershipTier = createServerFn({ method: 'POST' })
   .validator(archiveTierSchema)
   .handler(async ({ data }): Promise<{ id: string }> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const archived = await membershipTiers.archive(data.tierId, creatorId)
     if (!archived) throw new Error(CHANNEL_ERRORS.tierNotFound)
 
@@ -206,8 +198,6 @@ export const updateVideoAccess = createServerFn({ method: 'POST' })
       priceCents: number | null
     }> => {
       const creatorId = await requireUserId()
-      await connectToDatabase()
-
       const tierId = data.visibility === 'subscriber' ? data.tierId : null
       const priceCents = data.visibility === 'buyer' ? data.priceCents : null
       // Refused rather than saved unpriced, for the reason in the doc comment above.

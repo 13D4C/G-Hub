@@ -5,7 +5,6 @@ import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { isSellablePrice } from '@/lib/video-price'
 import { requireUserId } from '@/server/auth/require-user'
 import { users, videos } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { hasPurchasedVideo } from '@/server/lib/entitlement'
 import { PAYMENT_KIND_VIDEO_PURCHASE } from '@/server/lib/payment-kind'
 import { recordPaidSession } from '@/server/lib/payment-record'
@@ -58,8 +57,6 @@ export const startVideoPurchaseCheckout = createServerFn({ method: 'POST' })
   .validator(purchaseSchema)
   .handler(async ({ data }): Promise<{ url: string }> => {
     const buyerId = await requireUserId()
-    await connectToDatabase()
-
     const video = await videos.findById(data.videoId)
     if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
     if (video.visibility !== 'buyer') throw new Error(CHANNEL_ERRORS.videoNotForSale)
@@ -148,8 +145,6 @@ export const confirmVideoPurchase = createServerFn({ method: 'POST' })
   .validator(confirmSchema)
   .handler(async ({ data }): Promise<{ purchased: boolean }> => {
     const buyerId = await requireUserId()
-    await connectToDatabase()
-
     const user = await users.findById(buyerId)
     const session = await getStripe().checkout.sessions.retrieve(data.sessionId)
 

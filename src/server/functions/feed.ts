@@ -3,7 +3,6 @@ import type { FeedReason } from '@/lib/feed-reason'
 import type { VideoSummary } from '@/lib/video-summary-types'
 import { getUserId } from '@/server/auth/require-user'
 import { videos } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import {
   loadSubscribedCreatorIds,
   type ChannelAccess,
@@ -55,8 +54,6 @@ const FEED_SIZE = 30
 
 export const listFeed = createServerFn({ method: 'GET' }).handler(async (): Promise<FeedItem[]> => {
   const viewerId = await getUserId()
-  await connectToDatabase()
-
   const subscriptions = await loadSubscribedCreatorIds(viewerId)
   const subscribedCreatorIds = subscriptions.map((s) => s.creatorId)
 

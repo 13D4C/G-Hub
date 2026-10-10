@@ -7,7 +7,6 @@ import {
   videoPurchases,
   videos as videoRepo,
 } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-totals'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 import type { TranscodeStatus } from '@/lib/transcode-status'
@@ -68,8 +67,6 @@ export type CreatorDashboard = {
 export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
   async (): Promise<CreatorDashboard> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const [creator, tiers, videos, tipsByVideo, salesByVideo, subs] = await Promise.all([
       users.findById(creatorId),
       // Through the shared reader, so the dashboard and the channel page cannot

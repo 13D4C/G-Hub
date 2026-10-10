@@ -16,7 +16,6 @@ import {
   videoPurchases,
   type LedgerEntry,
 } from '@/server/data'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { yearMonthOf } from '@/server/lib/revenue-buckets'
 import {
   buildRevenueSeries,
@@ -92,8 +91,6 @@ export const getCreatorRevenue = createServerFn({ method: 'GET' })
   .validator(revenueSchema)
   .handler(async ({ data }): Promise<CreatorRevenue> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const year = data.year ?? currentRevenueYear(new Date())
 
     // ponytail: these read a creator's whole ledger on every poll, which is the price

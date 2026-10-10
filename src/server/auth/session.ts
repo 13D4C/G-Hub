@@ -25,8 +25,13 @@ function getSessionConfig(name: string, maxAge: number): SessionConfig {
     password: SESSION_SECRET,
     name,
     maxAge,
-    cookie: { sameSite: 'lax' },
+    cookie: { sameSite: 'lax', secure: servedOverHttps() },
   }
+}
+
+function servedOverHttps(): boolean {
+  const appUrl = process.env.APP_URL
+  return appUrl ? appUrl.startsWith('https://') : true
 }
 
 /** Not a React hook — just named to satisfy the `react-hooks/rules-of-hooks` lint rule, which the underlying `useSession` triggers. */

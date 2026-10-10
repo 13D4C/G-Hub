@@ -9,7 +9,6 @@ import { isSellablePrice } from '@/lib/video-price'
 import { VIDEO_VISIBILITIES, type VideoVisibility } from '@/lib/video-visibility'
 import { type TranscodeStatus } from '@/lib/transcode-status'
 import { recordAdImpression } from '@/server/lib/ad-impression'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
 import { membershipTiers, users, videoComments, videoLikes, videos as videoRepo } from '@/server/data'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
@@ -87,8 +86,6 @@ async function tierNameOf(requiredTierId: unknown): Promise<string> {
  */
 export const listVideos = createServerFn({ method: 'GET' }).handler(async () => {
   const viewerId = await getUserId()
-  await connectToDatabase()
-
   const videos = await videoRepo.listVisible(viewerId, 50)
 
   return summarizeVideosForViewer(videos, viewerId)
@@ -102,8 +99,6 @@ export type SubscribedFeed = {
 export const listSubscribedVideos = createServerFn({ method: 'GET' }).handler(
   async (): Promise<SubscribedFeed> => {
     const viewerId = await requireUserId()
-    await connectToDatabase()
-
     const subscriptions = await loadSubscribedCreatorIds(viewerId)
     if (subscriptions.length === 0) return { hasSubscriptions: false, videos: [] }
 
@@ -240,8 +235,6 @@ export const getVideoById = createServerFn({ method: 'GET' })
   .validator(getVideoByIdSchema)
   .handler(async ({ data }): Promise<PlaybackData> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
-
     const { video, subscribed, purchased } = await requirePlayableVideo(data.videoId, viewerId)
     // A `buyer` video already has `adsEnabled: false`, so the preroll never reaches
     // someone who paid for this one video — `!subscribed` is simply not the clause
@@ -325,8 +318,6 @@ export const getVideoTranscodeStatus = createServerFn({ method: 'GET' })
   .validator(transcodeStatusSchema)
   .handler(async ({ data }): Promise<VideoTranscodeStatus> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
-
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     const { hlsUrl, dashUrl } = playbackSourcesFor(video, viewerId)
@@ -351,8 +342,6 @@ export const getPlaybackSources = createServerFn({ method: 'GET' })
   .validator(playbackSourcesSchema)
   .handler(async ({ data }): Promise<PlaybackSources> => {
     const viewerId = await getUserId()
-    await connectToDatabase()
-
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
     return playbackSourcesFor(video, viewerId)
   })
@@ -382,8 +371,6 @@ export type LockedVideo = {
 export const getLockedVideo = createServerFn({ method: 'GET' })
   .validator(lockedVideoSchema)
   .handler(async ({ data }): Promise<LockedVideo | null> => {
-    await connectToDatabase()
-
     const video = await videoRepo.findById(data.videoId)
     if (!video) return null
     // Unreachable today — the `/video` route only calls this after a paywall
@@ -456,8 +443,6 @@ export const createVideo = createServerFn({ method: 'POST' })
       throw new Error(VIDEO_ERRORS.invalidPrice)
     }
 
-    await connectToDatabase()
-
     // Checked before the upload, not after: a rejected gate should not leave an
     // orphaned object in SeaweedFS. Must be the uploader's own live tier, or a
     // hand-built form could gate a video behind another creator's ladder.
@@ -511,8 +496,6 @@ export const updateVideoDetails = createServerFn({ method: 'POST' })
   .validator(updateVideoDetailsSchema)
   .handler(async ({ data }): Promise<{ id: string; title: string; description: string }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
-
     const video = await videoRepo.updateDetails(data.videoId, userId, {
       title: data.title,
       description: data.description,
@@ -528,8 +511,6 @@ export const deleteVideo = createServerFn({ method: 'POST' })
   .validator(deleteVideoSchema)
   .handler(async ({ data }): Promise<{ id: string }> => {
     const userId = await requireUserId()
-    await connectToDatabase()
-
     const video = await videoRepo.deleteOwned(data.videoId, userId)
     if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
