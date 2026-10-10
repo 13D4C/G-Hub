@@ -20,10 +20,10 @@ import { contentTypeFor, ladderForProbe, type ProbeResult } from './transcode-pl
 import { declaredBandwidthBps } from '../../lib/rendition-ladder.ts'
 import {
   getObjectStream,
-  keyFromPublicUrl,
-  publicUrl,
+  keyFromStoredUrl,
+  storedUrl,
   uploadFile,
-} from '../storage/seaweed.ts'
+} from '../storage/object-store.ts'
 
 export type RenditionSummary = { width: number; height: number; bitrateKbps: number }
 
@@ -117,7 +117,6 @@ async function uploadAll(files: string[], outputDir: string, prefix: string): Pr
 
 export type TranscodeJobInput = {
   videoId: string
-  /** The stored original — a public SeaweedFS url, as `video.url` holds it. */
   sourceUrl: string
   /** The random per-attempt path segment the output is written under. */
   prefix: string
@@ -132,7 +131,7 @@ export type TranscodeJobInput = {
  * the container's writable layer is shared with everything else running on the host.
  */
 export async function transcodeVideo(input: TranscodeJobInput): Promise<TranscodeResult> {
-  const sourceKey = keyFromPublicUrl(input.sourceUrl)
+  const sourceKey = keyFromStoredUrl(input.sourceUrl)
   if (!sourceKey) {
     throw new TranscodeSkipped('Source url does not point at this bucket')
   }
@@ -187,8 +186,8 @@ export async function transcodeVideo(input: TranscodeJobInput): Promise<Transcod
     stage(input.videoId, `done in ${Math.round((Date.now() - startedAt) / 1000)}s total`)
 
     return {
-      hlsUrl: publicUrl(`${keyPrefix}${output.hlsMaster}`),
-      dashUrl: publicUrl(`${keyPrefix}${output.dashManifest}`),
+      hlsUrl: storedUrl(`${keyPrefix}${output.hlsMaster}`),
+      dashUrl: storedUrl(`${keyPrefix}${output.dashManifest}`),
       // Widths are what the ladder asked for on the short edge; the manifest carries the
       // exact figures and is what the player reads, so these are for reporting only.
       renditions: rungs.map((rung) => ({

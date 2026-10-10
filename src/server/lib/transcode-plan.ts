@@ -173,9 +173,8 @@ export function backoffMsFor(attempts: number, baseMs: number = DEFAULT_RETRY_BA
  * `[A-Za-z0-9._-]` and nothing else, which turned a Thai filename into the empty string —
  * `ความรัก.mp4` came out as `mp4`, so every non-Latin upload landed under an anonymous key
  * that said nothing about what it held. Unicode letters and digits introduce none of the
- * risks above: S3 keys are UTF-8, `publicUrl` percent-encodes each segment for the browser,
- * and the name never reaches a filesystem path — the worker stages the source under a fixed
- * `source` filename.
+ * risks above: S3 keys are UTF-8, and the name never reaches a filesystem path — the worker
+ * stages the source under a fixed `source` filename.
  *
  * Combining marks (`\p{M}`) are kept alongside letters, which is not a detail: Thai writes
  * its vowels and tones as marks, so allowing only letters turned `ความรัก` into `ความร-ก`.

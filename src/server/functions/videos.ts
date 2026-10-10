@@ -20,9 +20,9 @@ import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import {
   deleteObject,
   deletePrefix,
-  keyFromPublicUrl,
+  keyFromStoredUrl,
   uploadObject,
-} from '@/server/storage/seaweed'
+} from '@/server/storage/object-store'
 import {
   loadSubscribedCreatorIds,
   requirePlayableVideo,
@@ -567,7 +567,7 @@ export const deleteVideo = createServerFn({ method: 'POST' })
     ])
 
     // A video is a tree now, not an object: the original upload, plus a manifest and every
-    // segment of every rendition. `keyFromPublicUrl` answers for one object, so it stays
+    // segment of every rendition. `keyFromStoredUrl` answers for one object, so it stays
     // only as the fallback for rows uploaded before the per-video prefix existed, whose
     // source sits outside the tree.
     //
@@ -577,7 +577,7 @@ export const deleteVideo = createServerFn({ method: 'POST' })
       const prefix = `videos/${video._id}/`
       await deletePrefix(prefix)
 
-      const legacyKey = keyFromPublicUrl(video.url)
+      const legacyKey = keyFromStoredUrl(video.url)
       if (legacyKey && !legacyKey.startsWith(prefix)) {
         await deleteObject(legacyKey)
       }

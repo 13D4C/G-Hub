@@ -22,7 +22,7 @@ import { MembershipTierModel } from '../src/server/db/models/membership-tier.ts'
 import { UserModel } from '../src/server/db/models/user.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
 import { AdModel } from '../src/server/db/models/ad.ts'
-import { uploadObject } from '../src/server/storage/seaweed.ts'
+import { uploadObject } from '../src/server/storage/object-store.ts'
 
 function listMp4(dir: string): string[] {
   if (!existsSync(dir)) return []

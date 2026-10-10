@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import { keyFromPublicUrl } from '@/server/storage/seaweed'
+import { keyFromStoredUrl } from '@/server/storage/object-store'
 import { secondsSetting } from '@/server/lib/transcode-plan'
 import {
   expiryFor,
@@ -12,11 +12,6 @@ import {
 
 /**
  * Turning a stored media url into one the browser may use, and back.
- *
- * Stored urls are still the SeaweedFS addresses `publicUrl` builds. They are no longer handed
- * out: every url that leaves the server is a signed, expiring `/api/media/...` address minted
- * here, which `src/routes/api/media/$.ts` serves. No data migration was needed, since the key
- * is recovered from the stored url at signing time.
  */
 
 /** How long a playback url lives by default. Stretched for long videos; see `signMediaUrl`. */
@@ -83,7 +78,7 @@ type SignOptions = {
  */
 export function signMediaUrl(storedUrl: string | null | undefined, options: SignOptions): string {
   if (!storedUrl) return ''
-  const key = keyFromPublicUrl(storedUrl)
+  const key = keyFromStoredUrl(storedUrl)
   if (!key) return ''
 
   const ttl = Math.max(
