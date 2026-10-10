@@ -12,10 +12,12 @@
  *    iOS play `.m3u8` with no Media Source Extensions at all.
  * 2. DASH, which nothing anywhere plays natively, so it is only ever reachable through
  *    the bundled VHS engine.
- * 3. The original progressive MP4, **always last and always present**. Where MSE is
- *    unavailable nothing claims the manifests, so a list whose last entry is not the
- *    original file is a video that silently stops playing on some devices. It is also
- *    what plays while a transcode is still queued, or after one has failed.
+ * 3. The original progressive MP4, last — and only while there is no adaptive stream.
+ *    It is what plays while a transcode is still queued, or after one has failed. Once the
+ *    manifests exist the server stops issuing it (`playbackSourcesFor`): it is the whole
+ *    video in one request, which is what "Save video as" and downloader extensions look
+ *    for, and nothing needs it — VHS plays the manifests wherever Media Source Extensions
+ *    exist, and Safari and iOS play the HLS natively where they do not.
  *
  * This is why the caller passes three strings rather than a prebuilt array: an array
  * literal is a fresh identity on every render, and `<VideoPlayer>` keys its construction
@@ -42,7 +44,10 @@ export type VideoSourceInput = {
   hlsUrl?: string | null
   /** The DASH manifest, pointing at the same segments the HLS playlists do. */
   dashUrl?: string | null
-  /** The original upload. Empty only for a row this viewer may not play. */
+  /**
+   * The original upload. Empty for a row this viewer may not play, and for a video whose
+   * adaptive stream has replaced it.
+   */
   mp4Url?: string | null
 }
 
@@ -52,24 +57,22 @@ function present(url: string | null | undefined): string {
 }
 
 /**
- * Build the source list, best format first.
+ * Build the source list, best format first, skipping whatever is absent.
  *
- * Returns an empty array when there is no MP4 to fall back to, which is exactly the
- * locked-catalogue case: `video-summary.ts` blanks `url` for a row the viewer may not
- * play, and a source list built from that must offer nothing rather than an entry with
- * an empty `src` that the player would try and fail to load.
+ * Returns an empty array when nothing is present, which is the locked case: the server
+ * blanks every url for a viewer who may not play the video, and a source list built from
+ * that must offer nothing rather than an entry with an empty `src` that the player would
+ * try and fail to load.
  */
 export function buildVideoSources(input: VideoSourceInput): VideoSource[] {
-  const mp4 = present(input.mp4Url)
-  if (!mp4) return []
-
   const sources: VideoSource[] = []
   const hls = present(input.hlsUrl)
   const dash = present(input.dashUrl)
+  const mp4 = present(input.mp4Url)
 
   if (hls) sources.push({ src: hls, type: VIDEO_MIME.hls })
   if (dash) sources.push({ src: dash, type: VIDEO_MIME.dash })
-  sources.push({ src: mp4, type: VIDEO_MIME.mp4 })
+  if (mp4) sources.push({ src: mp4, type: VIDEO_MIME.mp4 })
 
   return sources
 }
