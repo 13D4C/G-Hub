@@ -89,8 +89,8 @@ export async function claimNextVideo(workerId: string): Promise<ClaimedVideo | n
         'transcode.workerId': workerId,
         // A fresh output path per attempt, so a retry cannot interleave its segments with
         // those of an attempt that died halfway. Random rather than derived from the video
-        // id because these objects are public-read, and for a paywalled video an unguessable
-        // key is what protects the bytes.
+        // id as defence in depth: signed urls gate access, but a bucket still answering
+        // anonymous reads must not be able to serve a paywalled video from a guessable key.
         'transcode.prefix': randomUUID(),
         'transcode.startedAt': now,
         'transcode.error': '',

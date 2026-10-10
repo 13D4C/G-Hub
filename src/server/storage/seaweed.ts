@@ -3,6 +3,7 @@ import {
   DeleteObjectsCommand,
   GetBucketCorsCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutBucketCorsCommand,
   PutObjectCommand,
@@ -18,8 +19,11 @@ import type { Readable } from 'node:stream'
  * using path-style addressing (`{endpoint}/{bucket}/{key}`), because SeaweedFS
  * does not support virtual-hosted-style bucket subdomains.
  *
- * Objects are stored public-read so the browser can play them directly from the
- * SeaweedFS URL (see `publicUrl`). The bucket must allow anonymous GET.
+ * Browsers never fetch from SeaweedFS directly. Every media url handed out is a signed,
+ * expiring `/api/media/...` address (`src/server/lib/media-url.ts`), and that route reads the
+ * object here with the app's own credentials (`getObjectRange`). Objects are no longer written
+ * public-read, and the bucket should refuse anonymous GET — `npm run check:media-private`
+ * reports whether it does.
  */
 
 const endpoint = process.env.SEAWEED_S3_ENDPOINT
@@ -63,7 +67,10 @@ function getClient(): S3Client {
   return cachedClient
 }
 
-/** Public URL a browser can use to fetch the stored object. */
+/**
+ * The stored-url form of a key. Persisted on video and ad rows, and turned back into a key
+ * by `keyFromPublicUrl` when a signed url is minted — never handed to a browser as is.
+ */
 export function publicUrl(key: string): string {
   const safeKey = key.split('/').map(encodeURIComponent).join('/')
   return `${publicBase}/${SEAWEED_BUCKET}/${safeKey}`
@@ -75,7 +82,7 @@ type UploadInput = {
   contentType?: string
 }
 
-/** Upload an object to SeaweedFS and return its public URL. */
+/** Upload an object to SeaweedFS and return its stored url (see `publicUrl`). */
 export async function uploadObject({ key, body, contentType }: UploadInput): Promise<string> {
   await getClient().send(
     new PutObjectCommand({
@@ -83,7 +90,6 @@ export async function uploadObject({ key, body, contentType }: UploadInput): Pro
       Key: key,
       Body: body,
       ContentType: contentType,
-      ACL: 'public-read',
     }),
   )
 
@@ -140,6 +146,77 @@ export async function getObjectStream(key: string): Promise<Readable> {
 
   if (!result.Body) throw new Error(`Storage object has no body: ${key}`)
   return result.Body as Readable
+}
+
+export type RangedObject = {
+  body: ReadableStream
+  /** 206 for a satisfied range, 200 for the whole object. */
+  status: 200 | 206
+  contentLength?: number
+  contentRange?: string
+  contentType?: string
+  etag?: string
+  lastModified?: Date
+}
+
+/**
+ * Read an object, or one byte range of it, for the media proxy to stream on.
+ *
+ * The `Range` header is passed straight through: seeking in a progressive file and the
+ * adaptive engine's byte-range reads both depend on the partial response coming back intact.
+ * Returns null for a key that does not exist; an unsatisfiable range throws with the SDK's
+ * `InvalidRange` name, which the route turns into a 416.
+ */
+export async function getObjectRange(
+  key: string,
+  range?: string | null,
+): Promise<RangedObject | null> {
+  try {
+    const result = await getClient().send(
+      new GetObjectCommand({ Bucket: SEAWEED_BUCKET, Key: key, Range: range || undefined }),
+    )
+    if (!result.Body) return null
+
+    return {
+      body: result.Body.transformToWebStream(),
+      status: result.ContentRange ? 206 : 200,
+      contentLength: result.ContentLength,
+      contentRange: result.ContentRange,
+      contentType: result.ContentType,
+      etag: result.ETag,
+      lastModified: result.LastModified,
+    }
+  } catch (error) {
+    if (isMissing(error)) return null
+    throw error
+  }
+}
+
+/** An object's headers without its body, for a `HEAD` through the proxy. */
+export async function headObject(
+  key: string,
+): Promise<Omit<RangedObject, 'body' | 'status' | 'contentRange'> | null> {
+  try {
+    const result = await getClient().send(
+      new HeadObjectCommand({ Bucket: SEAWEED_BUCKET, Key: key }),
+    )
+    return {
+      contentLength: result.ContentLength,
+      contentType: result.ContentType,
+      etag: result.ETag,
+      lastModified: result.LastModified,
+    }
+  } catch (error) {
+    if (isMissing(error)) return null
+    throw error
+  }
+}
+
+function isMissing(error: unknown): boolean {
+  const name = (error as { name?: string } | null)?.name
+  const status = (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata
+    ?.httpStatusCode
+  return name === 'NoSuchKey' || name === 'NotFound' || status === 404
 }
 
 /**
@@ -227,13 +304,12 @@ export async function deletePrefix(prefix: string): Promise<void> {
 }
 
 /**
- * The origins allowed to fetch media in a browser.
+ * The origins allowed to fetch media from the bucket in a browser.
  *
- * `*` by default, and that is a considered answer rather than a lazy one: every object here
- * is stored `public-read` and already fetchable by anyone with the URL and no browser at
- * all, and none of these requests carries credentials — so `*` grants a page nothing that
- * `curl` does not already have. Narrowing it to the app's origin would be a restriction
- * that stops no attacker and breaks `localhost:3000` during development.
+ * Largely moot now that browsers fetch through the app's own `/api/media` route, which is
+ * same-origin and needs no CORS at all. Kept for a deployment that still points a CDN or an
+ * older client at the bucket; once the bucket refuses anonymous GET, `*` grants nothing,
+ * because the request is refused before CORS is ever consulted.
  */
 const corsOrigins = (process.env.SEAWEED_CORS_ORIGINS || '*')
   .split(',')

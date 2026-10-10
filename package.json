@@ -38,6 +38,8 @@
     "transcode-worker:once": "node --env-file=.env --experimental-strip-types scripts/transcode-worker.ts --once",
     "test:video-sources": "node --experimental-strip-types scripts/test-video-sources.ts",
     "test:video-quality": "node --experimental-strip-types scripts/test-video-quality.ts",
+    "test:media-token": "node --experimental-strip-types scripts/test-media-token.ts",
+    "check:media-private": "node --env-file=.env --experimental-strip-types scripts/check-media-private.ts",
     "backfill:transcode": "node --env-file=.env --experimental-strip-types scripts/backfill-transcode.ts",
     "backfill:transcode:apply": "node --env-file=.env --experimental-strip-types scripts/backfill-transcode.ts --apply"
   },
