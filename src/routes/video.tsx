@@ -133,6 +133,7 @@ function VideoPage() {
         {playback ? (
           <>
             <VideoPlayer
+              videoId={playback.video.id}
               src={playback.video.url}
               hlsUrl={playback.video.hlsUrl}
               dashUrl={playback.video.dashUrl}
