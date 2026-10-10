@@ -31,6 +31,7 @@ import {
 } from '@/server/lib/entitlement'
 import { channelFrom, summarizeVideosForViewer } from '@/server/lib/video-summary'
 import { safeFileName } from '@/server/lib/transcode-plan'
+import { signMediaUrl } from '@/server/lib/media-url'
 import { recordWatch } from '@/server/lib/watch-history'
 import type { VideoChannel, VideoSummary } from '@/lib/video-summary-types'
 
@@ -137,21 +138,67 @@ export const listSubscribedVideos = createServerFn({ method: 'GET' }).handler(
 
 const getVideoByIdSchema = z.object({ videoId: z.string() })
 
+export type PlaybackSources = {
+  /** The original upload, signed; empty once the adaptive manifests can play instead. */
+  url: string
+  /** The HLS master playlist and DASH manifest, signed; empty until the transcode lands. */
+  hlsUrl: string
+  dashUrl: string
+}
+
+/**
+ * The fields of a video row the urls are built from. Spelled out rather than derived with
+ * `typeof requirePlayableVideo`: the server-function compiler counts that as a use of the
+ * import, which would keep `entitlement.ts` — and mongoose behind it — in the client bundle.
+ */
+type PlayableVideo = {
+  url: string
+  durationSeconds: number
+  transcode?: { status?: string | null; hlsUrl?: string | null; dashUrl?: string | null } | null
+}
+
+/**
+ * The signed urls one viewer may play a video from. Every playback path goes through this, so
+ * there is one answer to "which addresses leave the server".
+ *
+ * The original upload is withheld entirely once the transcode is `ready`. It is the one file
+ * that is the whole video in a single request, which is exactly what "Save video as" and a
+ * downloader extension look for, and the adaptive stream reaches every device without it:
+ * VHS plays it wherever Media Source Extensions exist, and Safari and iOS play the HLS natively
+ * where they do not. Until the transcode is ready the original is still the only thing to play,
+ * so it is signed like everything else.
+ *
+ * Each url is bound to this viewer and made to outlast one watch of the video (see
+ * `signMediaUrl`).
+ */
+function playbackSourcesFor(video: PlayableVideo, viewerId: string | null): PlaybackSources {
+  const hls = video.transcode?.hlsUrl ?? ''
+  const dash = video.transcode?.dashUrl ?? ''
+  const adaptive = video.transcode?.status === 'ready' && !!(hls || dash)
+  const options = { viewerId, durationSeconds: video.durationSeconds }
+
+  return {
+    url: adaptive ? '' : signMediaUrl(video.url, options),
+    hlsUrl: signMediaUrl(hls, { ...options, directory: true }),
+    dashUrl: signMediaUrl(dash, { ...options, directory: true }),
+  }
+}
+
 export type PlaybackData = {
   video: {
     id: string
     title: string
     description: string
     /**
-     * The original upload. Handed out exactly as before, and still what plays whenever the
-     * adaptive manifests below are absent — which is every video until its transcode
-     * finishes, and every video whose transcode failed.
+     * The original upload, as a signed, expiring url. What plays whenever the adaptive
+     * manifests below are absent — every video until its transcode finishes, and every video
+     * whose transcode failed — and empty once they are not (see `playbackSourcesFor`).
      */
     url: string
     /**
-     * The HLS master playlist and the DASH manifest, both empty until the transcode is
-     * ready. Released by the same gate as the url above: the paywall works by withholding
-     * addresses, so a manifest is exactly as much of a secret as the file it describes.
+     * The HLS master playlist and the DASH manifest, signed, both empty until the transcode
+     * is ready. Released by the same gate as the url above: a manifest is exactly as much of
+     * a secret as the file it describes.
      */
     hlsUrl: string
     dashUrl: string
@@ -246,13 +293,11 @@ export const getVideoById = createServerFn({ method: 'GET' })
         id: String(video._id),
         title: video.title,
         description: video.description,
-        url: video.url,
-        // Optional throughout, and not defensively: `.lean()` does not apply schema
-        // defaults, so a video uploaded before this pipeline existed really does come
-        // back with the whole `transcode` path missing. Empty manifests and a `pending`
-        // status describe that row correctly — it plays from `url`, as it always has.
-        hlsUrl: video.transcode?.hlsUrl ?? '',
-        dashUrl: video.transcode?.dashUrl ?? '',
+        // `transcode` is optional throughout, and not defensively: `.lean()` does not apply
+        // schema defaults, so a video uploaded before this pipeline existed really does come
+        // back with the whole path missing. Empty manifests and a `pending` status describe
+        // that row correctly — it plays from `url`, as it always has.
+        ...playbackSourcesFor(video, viewerId),
         transcodeStatus: (video.transcode?.status as TranscodeStatus | undefined) ?? null,
         durationSeconds: video.durationSeconds,
         createdAt: video.createdAt.toISOString(),
@@ -287,8 +332,8 @@ export type VideoTranscodeStatus = {
  * view count and, worse, the ad revenue the `/revenue` page reports. This reads the same
  * fields and writes nothing at all.
  *
- * Gated identically all the same. The manifests are addresses of public-read objects, so
- * handing them to somebody who has not cleared the paywall would open the video to them as
+ * Gated identically all the same. A signed manifest url opens the video for as long as it
+ * lives, so handing one to somebody who has not cleared the paywall would open it to them as
  * surely as handing over `url` would.
  */
 export const getVideoTranscodeStatus = createServerFn({ method: 'GET' })
@@ -299,11 +344,32 @@ export const getVideoTranscodeStatus = createServerFn({ method: 'GET' })
 
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
+    const { hlsUrl, dashUrl } = playbackSourcesFor(video, viewerId)
     return {
       status: (video.transcode?.status as TranscodeStatus | undefined) ?? null,
-      hlsUrl: video.transcode?.hlsUrl ?? '',
-      dashUrl: video.transcode?.dashUrl ?? '',
+      hlsUrl,
+      dashUrl,
     }
+  })
+
+const playbackSourcesSchema = z.object({ videoId: z.string() })
+
+/**
+ * Fresh signed urls for a video already playing, for when the ones it started with expire.
+ *
+ * The player calls this when a request is refused mid-watch, typically a tab left paused past
+ * its grant. Like `getVideoTranscodeStatus` it writes nothing: renewing a url is not a new view,
+ * a new watch or a new ad impression, and a client-callable path that counted any of those
+ * could be looped to inflate them.
+ */
+export const getPlaybackSources = createServerFn({ method: 'GET' })
+  .validator(playbackSourcesSchema)
+  .handler(async ({ data }): Promise<PlaybackSources> => {
+    const viewerId = await getUserId()
+    await connectToDatabase()
+
+    const { video } = await requirePlayableVideo(data.videoId, viewerId)
+    return playbackSourcesFor(video, viewerId)
   })
 
 const lockedVideoSchema = z.object({ videoId: z.string() })
