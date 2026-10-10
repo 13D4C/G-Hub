@@ -3,6 +3,7 @@ import {
   DeleteObjectsCommand,
   GetBucketCorsCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutBucketCorsCommand,
   PutObjectCommand,
@@ -140,6 +141,77 @@ export async function getObjectStream(key: string): Promise<Readable> {
 
   if (!result.Body) throw new Error(`Storage object has no body: ${key}`)
   return result.Body as Readable
+}
+
+export type RangedObject = {
+  body: ReadableStream
+  /** 206 for a satisfied range, 200 for the whole object. */
+  status: 200 | 206
+  contentLength?: number
+  contentRange?: string
+  contentType?: string
+  etag?: string
+  lastModified?: Date
+}
+
+/**
+ * Read an object, or one byte range of it, for the media proxy to stream on.
+ *
+ * The `Range` header is passed straight through: seeking in a progressive file and the
+ * adaptive engine's byte-range reads both depend on the partial response coming back intact.
+ * Returns null for a key that does not exist; an unsatisfiable range throws with the SDK's
+ * `InvalidRange` name, which the route turns into a 416.
+ */
+export async function getObjectRange(
+  key: string,
+  range?: string | null,
+): Promise<RangedObject | null> {
+  try {
+    const result = await getClient().send(
+      new GetObjectCommand({ Bucket: SEAWEED_BUCKET, Key: key, Range: range || undefined }),
+    )
+    if (!result.Body) return null
+
+    return {
+      body: result.Body.transformToWebStream(),
+      status: result.ContentRange ? 206 : 200,
+      contentLength: result.ContentLength,
+      contentRange: result.ContentRange,
+      contentType: result.ContentType,
+      etag: result.ETag,
+      lastModified: result.LastModified,
+    }
+  } catch (error) {
+    if (isMissing(error)) return null
+    throw error
+  }
+}
+
+/** An object's headers without its body, for a `HEAD` through the proxy. */
+export async function headObject(
+  key: string,
+): Promise<Omit<RangedObject, 'body' | 'status' | 'contentRange'> | null> {
+  try {
+    const result = await getClient().send(
+      new HeadObjectCommand({ Bucket: SEAWEED_BUCKET, Key: key }),
+    )
+    return {
+      contentLength: result.ContentLength,
+      contentType: result.ContentType,
+      etag: result.ETag,
+      lastModified: result.LastModified,
+    }
+  } catch (error) {
+    if (isMissing(error)) return null
+    throw error
+  }
+}
+
+function isMissing(error: unknown): boolean {
+  const name = (error as { name?: string } | null)?.name
+  const status = (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata
+    ?.httpStatusCode
+  return name === 'NoSuchKey' || name === 'NotFound' || status === 404
 }
 
 /**
