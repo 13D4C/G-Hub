@@ -4,8 +4,7 @@ import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { TIP_MAX_CENTS, TIP_MIN_CENTS } from '@/lib/tips'
 import { requireUserId } from '@/server/auth/require-user'
-import { UserModel } from '@/server/db/models/user'
-import { VideoModel } from '@/server/db/models/video'
+import { users, videos } from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
 import { PAYMENT_KIND_TIP } from '@/server/lib/payment-kind'
@@ -56,24 +55,22 @@ export const startTipCheckout = createServerFn({ method: 'POST' })
       throw new Error(CHANNEL_ERRORS.invalidTipAmount)
     }
 
-    const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName channelCurrency')
-      .lean()
+    const creator = await users.findById(data.creatorId)
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
     // A video id from the browser is checked against the creator it claims to belong
     // to. Otherwise a tip could be attributed to a video from someone else's channel,
     // and the creator's own page would show a stranger's video earning them money.
     if (data.videoId) {
-      const video = await VideoModel.findOne({ _id: data.videoId, uploadedBy: creator._id })
-        .select('_id')
-        .lean()
-      if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
+      const video = await videos.findById(data.videoId)
+      if (!video || video.uploadedBy !== creator.id) {
+        throw new Error(INTERACTION_ERRORS.videoNotFound)
+      }
     }
 
     const currency = creator.channelCurrency || 'usd'
     const channelName = creator.channelName || creator.name || 'Channel'
-    const creatorId = String(creator._id)
+    const creatorId = creator.id
     const customerId = await ensureCustomerId(supporterId)
 
     const appUrl = getAppUrl()

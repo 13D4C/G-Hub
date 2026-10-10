@@ -2,10 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { COMMENT_MAX_LENGTH, INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
-import { UserModel } from '@/server/db/models/user'
-import { VideoCommentModel } from '@/server/db/models/video-comment'
-import { VideoLikeModel } from '@/server/db/models/video-like'
-import { VideoModel } from '@/server/db/models/video'
+import { users, videoComments, videoLikes, videos } from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { requirePlayableVideo } from '@/server/lib/entitlement'
 
@@ -47,11 +44,6 @@ const updateCommentSchema = z.object({
   body: z.string().trim().min(1).max(COMMENT_MAX_LENGTH),
 })
 
-/** Mongo's duplicate-key error, raised here by the unique index on `videolikes`. */
-function isDuplicateKeyError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 11000
-}
-
 /**
  * Interactions are only accepted on videos a viewer is actually allowed to watch —
  * the same `requirePlayableVideo` that gates playback, so a premium video's like
@@ -81,13 +73,13 @@ export const getVideoInteractions = createServerFn({ method: 'GET' })
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
     const [commentCount, viewerLike] = await Promise.all([
-      VideoCommentModel.countDocuments({ videoId: video._id }),
+      videoComments.countByVideo(video.id),
       // Index-only, and the one thing a denormalized counter cannot answer.
-      viewerId ? VideoLikeModel.exists({ videoId: video._id, userId: viewerId }) : null,
+      viewerId ? videoLikes.exists(video.id, viewerId) : false,
     ])
 
     return {
-      videoId: String(video._id),
+      videoId: video.id,
       // Read off the video doc `requirePlayableVideo` already fetched, so likes and
       // shares cost no extra query. `.lean()` skips schema defaults, so videos
       // created before these fields existed read back as `undefined` despite the
@@ -95,7 +87,7 @@ export const getVideoInteractions = createServerFn({ method: 'GET' })
       likeCount: video.likeCount ?? 0,
       commentCount,
       shareCount: video.shareCount ?? 0,
-      viewerHasLiked: viewerLike !== null,
+      viewerHasLiked: viewerLike,
     }
   })
 
@@ -114,42 +106,32 @@ export const toggleVideoLike = createServerFn({ method: 'POST' })
     await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, userId)
 
-    const key = { videoId: video._id, userId }
+    const videoId = video.id
 
     // Delete-then-insert rather than read-then-branch: the delete is itself the test
     // for "was it liked?", so there is no read/write gap to lose a race in.
-    const removed = await VideoLikeModel.findOneAndDelete(key).lean()
+    const removed = await videoLikes.remove(videoId, userId)
     let liked = false
     let delta = -1
 
     if (!removed) {
-      try {
-        await VideoLikeModel.create(key)
-        liked = true
-        delta = 1
-      } catch (err) {
-        // A concurrent double submit already inserted this exact like and the unique
-        // index turned this one into E11000. The desired end state (liked) already
-        // holds, so the toggle is idempotent — and the request that *did* insert the
-        // row is the one that increments, so this one must not.
-        if (!isDuplicateKeyError(err)) throw err
-        liked = true
-        delta = 0
-      }
+      // A concurrent double submit may already have inserted this exact like, in which
+      // case `insert` reports false. The desired end state (liked) already holds, so
+      // the toggle is idempotent — and the request that *did* insert the row is the one
+      // that increments, so this one must not.
+      const inserted = await videoLikes.insert(videoId, userId)
+      liked = true
+      delta = inserted ? 1 : 0
     }
 
     // `returnDocument: 'after'` gives the post-increment value, so this replaces the
     // `countDocuments` this handler would otherwise need: the same number of queries
     // here, and every summary read gets the count for free.
     const updated = delta
-      ? await VideoModel.findByIdAndUpdate(
-          video._id,
-          { $inc: { likeCount: delta } },
-          { returnDocument: 'after', projection: { likeCount: 1 } },
-        ).lean()
+      ? await videos.incrementLike(video.id, delta)
       : null
 
-    return { liked, likeCount: updated?.likeCount ?? video.likeCount ?? 0 }
+    return { liked, likeCount: updated ?? video.likeCount ?? 0 }
   })
 
 export type CommentDto = {
@@ -194,13 +176,11 @@ export const listComments = createServerFn({ method: 'GET' })
     // Keyset, not skip/limit: `_id` descending is effectively newest-first and is
     // unique, so a comment posted mid-scroll cannot shift a row across a page
     // boundary. A `createdAt` cursor has millisecond ties and would.
-    const docs = await VideoCommentModel.find({
-      videoId: video._id,
-      ...(data.cursor ? { _id: { $lt: data.cursor } } : {}),
-    })
-      .sort({ _id: -1 })
-      .limit(data.limit + 1)
-      .lean()
+    const docs = await videoComments.listByVideo(
+      video.id,
+      data.limit + 1,
+      data.cursor ?? null,
+    )
 
     const hasMore = docs.length > data.limit
     const page = hasMore ? docs.slice(0, data.limit) : docs
@@ -208,23 +188,21 @@ export const listComments = createServerFn({ method: 'GET' })
     // Author names via one extra `$in` query rather than `.populate()`:
     // `InferSchemaType` types `userId` as an ObjectId and populate does not narrow
     // it, so the populated form would need a cast this codebase has none of.
-    const authorIds = [...new Set(page.map((c) => String(c.userId)))]
-    const authors = await UserModel.find({ _id: { $in: authorIds } })
-      .select('name')
-      .lean()
-    const nameById = new Map(authors.map((u) => [String(u._id), u.name]))
+    const authorIds = [...new Set(page.map((c) => c.userId))]
+    const authors = await users.listByIds(authorIds)
+    const nameById = new Map(authors.map((u) => [u.id, u.name]))
 
     return {
       comments: page.map((c) => ({
-        id: String(c._id),
-        videoId: String(c.videoId),
+        id: c.id,
+        videoId: c.videoId,
         body: c.body,
-        authorId: String(c.userId),
-        authorName: authorNameFrom(nameById.get(String(c.userId))),
+        authorId: c.userId,
+        authorName: authorNameFrom(nameById.get(c.userId)),
         createdAt: c.createdAt.toISOString(),
         editedAt: c.editedAt ? c.editedAt.toISOString() : null,
       })),
-      nextCursor: hasMore ? String(page[page.length - 1]._id) : null,
+      nextCursor: hasMore ? page[page.length - 1].id : null,
     }
   })
 
@@ -236,16 +214,12 @@ export const createComment = createServerFn({ method: 'POST' })
     await connectToDatabase()
     const { video } = await requirePlayableVideo(data.videoId, userId)
 
-    const comment = await VideoCommentModel.create({
-      videoId: video._id,
-      userId,
-      body: data.body,
-    })
-    const author = await UserModel.findById(userId).select('name').lean()
+    const comment = await videoComments.create(video.id, userId, data.body)
+    const author = await users.findById(userId)
 
     return {
-      id: String(comment._id),
-      videoId: String(comment.videoId),
+      id: comment.id,
+      videoId: comment.videoId,
       body: comment.body,
       authorId: userId,
       authorName: authorNameFrom(author?.name),
@@ -268,14 +242,10 @@ export const updateComment = createServerFn({ method: 'POST' })
     await connectToDatabase()
 
     const editedAt = new Date()
-    const updated = await VideoCommentModel.findOneAndUpdate(
-      { _id: data.commentId, userId },
-      { body: data.body, editedAt },
-      { returnDocument: 'after' },
-    ).lean()
+    const updated = await videoComments.updateOwn(data.commentId, userId, data.body, editedAt)
     if (!updated) throw new Error(INTERACTION_ERRORS.commentNotFound)
 
-    return { id: String(updated._id), body: updated.body, editedAt: editedAt.toISOString() }
+    return { id: updated.id, body: updated.body, editedAt: editedAt.toISOString() }
   })
 
 /**
@@ -288,13 +258,10 @@ export const deleteComment = createServerFn({ method: 'POST' })
     const userId = await requireUserId()
     await connectToDatabase()
 
-    const deleted = await VideoCommentModel.findOneAndDelete({
-      _id: data.commentId,
-      userId,
-    }).lean()
+    const deleted = await videoComments.deleteOwn(data.commentId, userId)
     if (!deleted) throw new Error(INTERACTION_ERRORS.commentNotFound)
 
-    return { id: String(deleted._id), videoId: String(deleted.videoId) }
+    return { id: deleted.id, videoId: deleted.videoId }
   })
 
 /**
@@ -312,11 +279,7 @@ export const recordShare = createServerFn({ method: 'POST' })
     // anything to someone who can already watch it.
     const { video } = await requirePlayableVideo(data.videoId, viewerId)
 
-    const updated = await VideoModel.findByIdAndUpdate(
-      video._id,
-      { $inc: { shareCount: 1 } },
-      { returnDocument: 'after', projection: { shareCount: 1 } },
-    ).lean()
+    const shareCount = await videos.incrementShare(video.id)
 
-    return { shareCount: updated?.shareCount ?? 0 }
+    return { shareCount }
   })

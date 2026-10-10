@@ -3,11 +3,13 @@ import { z } from 'zod'
 import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import type { VideoVisibility } from '@/lib/video-visibility'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
-import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
-import { MembershipTierModel } from '@/server/db/models/membership-tier'
-import { UserModel } from '@/server/db/models/user'
-import { TipModel } from '@/server/db/models/tip'
-import { VideoModel } from '@/server/db/models/video'
+import {
+  channelSubscriptions,
+  membershipTiers,
+  tips as tipLedger,
+  users,
+  videos as videoRepo,
+} from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 import {
@@ -135,17 +137,12 @@ export const getChannel = createServerFn({ method: 'GET' })
     const viewerId = await getUserId()
     await connectToDatabase()
 
-    const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName channelDescription channelCurrency avatarUrl')
-      .lean()
+    const creator = await users.findById(data.creatorId)
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
-    const isOwner = viewerId === String(creator._id)
+    const isOwner = viewerId === creator.id
     const sub = viewerId
-      ? await ChannelSubscriptionModel.findOne({
-          subscriberId: viewerId,
-          creatorId: creator._id,
-        }).lean()
+      ? await channelSubscriptions.find(viewerId, creator.id)
       : null
     const subscribed = isOwner || isEntitled(sub ?? null)
 
@@ -153,19 +150,16 @@ export const getChannel = createServerFn({ method: 'GET' })
     // can see what they would be buying. Only the media `url` is withheld, and it is
     // never selected here — playback goes through `getVideoById`, which re-checks.
     // The owner sees their own private videos here; nobody else learns they exist.
-    // Applied in the query rather than by filtering the result, so a private title
-    // never leaves the database on someone else's request.
-    const [tiers, videos] = await Promise.all([
-      readLadder(creator._id),
-      VideoModel.find({
-        uploadedBy: creator._id,
-        ...(isOwner ? {} : { visibility: { $ne: 'private' } }),
-      })
-        .select('title description durationSeconds visibility requiredTierId priceCents url')
-        .sort({ createdAt: -1 })
-        .limit(100)
-        .lean(),
+    // Filtered here rather than in the query: the repository reads a creator's rows
+    // without a viewer, so the private check is applied once, on the way out, and a
+    // private title still never leaves the server for someone else's request.
+    const [tiers, channelVideos] = await Promise.all([
+      readLadder(creator.id),
+      videoRepo.listByCreator(creator.id, 100),
     ])
+    const videos = isOwner
+      ? channelVideos
+      : channelVideos.filter((v) => v.visibility !== 'private')
 
     // The row's tier says what was *attempted*; only an entitling status says what
     // was bought. `tierStanding` owns that split so this cannot drift from
@@ -193,18 +187,16 @@ export const getChannel = createServerFn({ method: 'GET' })
     // A purchase is per video and owes nothing to the subscription above.
     const purchasedIds = await loadPurchasedVideoIds(
       viewerId,
-      videos.filter((v) => v.visibility === 'buyer').map((v) => v._id),
+      videos.filter((v) => v.visibility === 'buyer').map((v) => v.id),
     )
 
     // Every tip row is money that actually arrived — see `models/tip.ts` — so this
     // sums the collection with no status filter.
-    const [tips] = await TipModel.aggregate<{ total: number }>([
-      { $match: { creatorId: creator._id } },
-      { $group: { _id: null, total: { $sum: '$amountCents' } } },
-    ])
+    const tipRows = await tipLedger.listByCreator(creator.id)
+    const tipCents = tipRows.reduce((sum, row) => sum + row.amountCents, 0)
 
     return {
-      creatorId: String(creator._id),
+      creatorId: creator.id,
       name: creator.channelName || creator.name || 'Untitled channel',
       description: creator.channelDescription ?? '',
       avatarUrl: creator.avatarUrl || '',
@@ -218,7 +210,7 @@ export const getChannel = createServerFn({ method: 'GET' })
       viewerTierId,
       viewerTierName: entitledByRow ? (sub?.tierName ?? '') : '',
       pendingTierId,
-      tipTotalCents: tips?.total ?? 0,
+      tipTotalCents: tipCents,
       videos: videos.map((v) => {
         const visibility = v.visibility as VideoVisibility
         const premium = visibility === 'subscriber'
@@ -234,11 +226,11 @@ export const getChannel = createServerFn({ method: 'GET' })
           subscribed,
           heldTier,
           requiredTier: tierRefOf(requiredTierId, ranks),
-          purchased: purchasedIds.has(String(v._id)),
+          purchased: purchasedIds.has(v.id),
         })
 
         return {
-          id: String(v._id),
+          id: v.id,
           title: v.title,
           description: v.description,
           url: unlocked ? signThumbnailUrl(v.url, viewerId) : '',
@@ -281,7 +273,7 @@ export const updateChannelSettings = createServerFn({ method: 'POST' })
     const userId = await requireUserId()
     await connectToDatabase()
 
-    await UserModel.updateOne({ _id: userId }, { $set: data })
+    await users.updateProfile(userId, data)
     return { ok: true }
   })
 
@@ -308,35 +300,26 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
 
     if (subscriberId === data.creatorId) throw new Error(CHANNEL_ERRORS.cannotSubscribeToSelf)
 
-    const creator = await UserModel.findById(data.creatorId)
-      .select('name channelName channelCurrency')
-      .lean()
+    const creator = await users.findById(data.creatorId)
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
     // The tier must belong to *this* creator and still be on sale. Otherwise a
     // hand-edited request could buy a cheap tier from one channel and have it
     // recorded against another, which the gate would then honour.
-    const tier = await MembershipTierModel.findOne({
-      _id: data.tierId,
-      creatorId: creator._id,
-      active: true,
-    }).lean()
+    const tier = await membershipTiers.findActiveOwned(data.tierId, creator.id)
     if (!tier) throw new Error(CHANNEL_ERRORS.tierNotFound)
 
     const priceCents = tier.priceCents
 
-    const existing = await ChannelSubscriptionModel.findOne({
-      subscriberId,
-      creatorId: creator._id,
-    }).lean()
+    const existing = await channelSubscriptions.find(subscriberId, creator.id)
     // Stripe would happily create a second, separately billed subscription.
     if (isEntitled(existing ?? null)) throw new Error(CHANNEL_ERRORS.alreadySubscribed)
 
     const currency = tier.currency || creator.channelCurrency || 'usd'
     const customerId = await ensureCustomerId(subscriberId)
     const channelName = creator.channelName || creator.name || 'Channel'
-    const creatorId = String(creator._id)
-    const tierId = String(tier._id)
+    const creatorId = creator.id
+    const tierId = tier.id
     const tierName = tier.name
 
     // Written before the handoff so the channel page can say "payment pending"
@@ -346,11 +329,13 @@ export const startChannelCheckout = createServerFn({ method: 'POST' })
     // The tier is written here as well as in `syncSubscription`, and overwrites
     // whatever the row named before: a lapsed row left over from an earlier tier
     // would otherwise go on naming that one while the new payment settles.
-    await ChannelSubscriptionModel.findOneAndUpdate(
-      { subscriberId, creatorId: creator._id },
-      { stripeCustomerId: customerId, priceCents, currency, tierId: tier._id, tierName },
-      { upsert: true, setDefaultsOnInsert: true },
-    )
+    await channelSubscriptions.upsert(subscriberId, creatorId, {
+      stripeCustomerId: customerId,
+      priceCents,
+      currency,
+      tierId,
+      tierName,
+    })
 
     const appUrl = getAppUrl()
     const session = await getStripe().checkout.sessions.create({
@@ -399,7 +384,7 @@ export const confirmChannelCheckout = createServerFn({ method: 'POST' })
     const subscriberId = await requireUserId()
     await connectToDatabase()
 
-    const user = await UserModel.findById(subscriberId).select('stripeCustomerId').lean()
+    const user = await users.findById(subscriberId)
     const session = await getStripe().checkout.sessions.retrieve(data.sessionId)
 
     const customerId =
@@ -435,12 +420,7 @@ export const confirmChannelCheckout = createServerFn({ method: 'POST' })
       typeof session.invoice === 'string' ? session.invoice : (session.invoice?.id ?? null)
     if (invoiceId) await recordSubscriptionInvoice(invoiceId)
 
-    const sub = await ChannelSubscriptionModel.findOne({
-      subscriberId,
-      creatorId: data.creatorId,
-    })
-      .select('status currentPeriodEnd')
-      .lean()
+    const sub = await channelSubscriptions.find(subscriberId, data.creatorId)
 
     return { subscribed: isEntitled(sub ?? null) }
   })
@@ -456,7 +436,7 @@ export const openBillingPortal = createServerFn({ method: 'POST' })
     const subscriberId = await requireUserId()
     await connectToDatabase()
 
-    const user = await UserModel.findById(subscriberId).select('stripeCustomerId').lean()
+    const user = await users.findById(subscriberId)
     if (!user?.stripeCustomerId) throw new Error(CHANNEL_ERRORS.noSubscription)
 
     const session = await getStripe().billingPortal.sessions.create({

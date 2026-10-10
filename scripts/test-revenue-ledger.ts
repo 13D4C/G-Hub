@@ -32,6 +32,15 @@ import { connectToDatabase } from '../src/server/db/mongoose.ts'
 import { recordAdImpression } from '../src/server/lib/ad-impression.ts'
 import { REVENUE_TIME_ZONE } from '../src/server/lib/revenue-series.ts'
 
+/** A Mongoose video document as the repo-shaped `{ id, uploadedBy }` these now take. */
+function ref(video: { _id: unknown; uploadedBy?: unknown }) {
+  return {
+    id: String(video._id),
+    uploadedBy: video.uploadedBy ? String(video.uploadedBy) : null,
+  }
+}
+
+
 const tag = `revenue-test-${Date.now()}`
 
 async function main() {
@@ -77,8 +86,8 @@ async function main() {
   // --- ad impressions ---
   {
     // Twice for the same signed-in viewer, inside the same dedupe window.
-    await recordAdImpression(String(viewer._id), video, adId, shownAt)
-    await recordAdImpression(String(viewer._id), video, adId, shownAt)
+    await recordAdImpression(String(viewer._id), ref(video), String(adId), shownAt)
+    await recordAdImpression(String(viewer._id), ref(video), String(adId), shownAt)
 
     const rows = await AdImpressionModel.find({ creatorId: creator._id, viewerId: viewer._id })
     assert.equal(rows.length, 1, 'a repeat inside the window must not count twice')
@@ -89,8 +98,8 @@ async function main() {
     // Anonymous rows carry no dedupe key at all, so the sparse unique index must let
     // both through. If `dedupeKey` were stored as an explicit null this would be 1,
     // and every anonymous impression in the system would collapse into one row.
-    await recordAdImpression(null, video, adId, shownAt)
-    await recordAdImpression(null, video, adId, shownAt)
+    await recordAdImpression(null, ref(video), String(adId), shownAt)
+    await recordAdImpression(null, ref(video), String(adId), shownAt)
 
     const rows = await AdImpressionModel.find({ creatorId: creator._id, viewerId: null })
     assert.equal(rows.length, 2, 'anonymous impressions are each their own row')
@@ -98,7 +107,7 @@ async function main() {
 
   {
     const before = await AdImpressionModel.countDocuments({ videoId: orphan._id })
-    await recordAdImpression(String(viewer._id), orphan, adId, shownAt)
+    await recordAdImpression(String(viewer._id), ref(orphan), String(adId), shownAt)
     const after = await AdImpressionModel.countDocuments({ videoId: orphan._id })
     assert.equal(after, before, 'an impression on a creatorless video credits nobody')
   }
@@ -108,7 +117,7 @@ async function main() {
     await assert.doesNotReject(
       // A deliberately invalid ad id: the create throws inside, and the caller must
       // still see a clean resolve.
-      () => recordAdImpression(String(viewer._id), video, 'not-an-object-id', shownAt),
+      () => recordAdImpression(String(viewer._id), ref(video), 'not-an-object-id', shownAt),
       'recordAdImpression must swallow its own errors',
     )
   }

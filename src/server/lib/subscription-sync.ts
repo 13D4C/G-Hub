@@ -1,5 +1,5 @@
 import type Stripe from 'stripe'
-import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
+import { channelSubscriptions } from '@/server/data'
 import { getStripe } from '@/server/lib/stripe'
 
 /**
@@ -61,20 +61,16 @@ export async function syncSubscription(subscriptionId: string): Promise<void> {
 
   // Upsert, not update: the webhook can beat the return from Checkout, and either
   // one arriving first must produce the same row.
-  await ChannelSubscriptionModel.findOneAndUpdate(
-    { subscriberId, creatorId },
-    {
-      stripeCustomerId: customerIdOf(subscription),
-      stripeSubscriptionId: subscription.id,
-      status: subscription.status,
-      currentPeriodEnd: currentPeriodEndOf(subscription),
-      cancelAtPeriodEnd: subscription.cancel_at_period_end,
-      // Empty for a channel-level subscription, which is what every subscription was
-      // before tiers existed. Stripe metadata values are strings, so `''` is how "no
-      // tier" arrives and null is how it has to be stored.
-      tierId: tierId || null,
-      tierName: tierName ?? '',
-    },
-    { upsert: true, returnDocument: 'after' },
-  ).lean()
+  await channelSubscriptions.upsert(subscriberId, creatorId, {
+    stripeCustomerId: customerIdOf(subscription),
+    stripeSubscriptionId: subscription.id,
+    status: subscription.status,
+    currentPeriodEnd: currentPeriodEndOf(subscription),
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    // Empty for a channel-level subscription, which is what every subscription was
+    // before tiers existed. Stripe metadata values are strings, so `''` is how "no
+    // tier" arrives and null is how it has to be stored.
+    tierId: tierId || null,
+    tierName: tierName ?? '',
+  })
 }

@@ -2,15 +2,14 @@ import { createServerFn } from '@tanstack/react-start'
 import type { FeedReason } from '@/lib/feed-reason'
 import type { VideoSummary } from '@/lib/video-summary-types'
 import { getUserId } from '@/server/auth/require-user'
-import { VideoModel } from '@/server/db/models/video'
+import { videos } from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import {
   loadSubscribedCreatorIds,
-  visibleToViewerFilter,
   type ChannelAccess,
 } from '@/server/lib/entitlement'
 import { mergeCandidatePools, rankFeed, type FeedCandidate } from '@/server/lib/feed-ranking'
-import { summarizeVideosForViewer, type VideoRow } from '@/server/lib/video-summary'
+import { summarizeVideosForViewer } from '@/server/lib/video-summary'
 import { loadViewerSignals } from '@/server/lib/watch-history'
 
 /**
@@ -52,13 +51,7 @@ const RECENT_POOL = 120
 /** How many rows the page actually renders. */
 const FEED_SIZE = 30
 
-const VIDEO_FIELDS = 'title description url durationSeconds visibility uploadedBy requiredTierId priceCents createdAt viewCount likeCount'
 
-type CandidateRow = VideoRow & {
-  createdAt?: Date
-  viewCount?: number
-  likeCount?: number
-}
 
 export const listFeed = createServerFn({ method: 'GET' }).handler(async (): Promise<FeedItem[]> => {
   const viewerId = await getUserId()
@@ -67,33 +60,16 @@ export const listFeed = createServerFn({ method: 'GET' }).handler(async (): Prom
   const subscriptions = await loadSubscribedCreatorIds(viewerId)
   const subscribedCreatorIds = subscriptions.map((s) => s.creatorId)
 
-  // Both pools are combined with an explicit `$and` rather than by spreading
-  // `visibleToViewerFilter` alongside a second clause. That filter returns an `$or`
-  // for a signed-in viewer, and a spread works today only because nothing else in
-  // these queries uses `$or` — the day one does, a clause is silently overwritten and
-  // the casualty is a private video appearing in a stranger's feed. `$and` costs
-  // nothing and removes the trap entirely.
-  const visible = visibleToViewerFilter(viewerId)
   const cutoff = new Date(Date.now() - RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000)
 
   const [subscribedVideos, recentVideos] = await Promise.all([
-    subscribedCreatorIds.length === 0
-      ? Promise.resolve<CandidateRow[]>([])
-      : VideoModel.find({ $and: [visible, { uploadedBy: { $in: subscribedCreatorIds } }] })
-          .select(VIDEO_FIELDS)
-          .sort({ createdAt: -1 })
-          .limit(SUBSCRIBED_POOL)
-          .lean<CandidateRow[]>(),
-    VideoModel.find({ $and: [visible, { createdAt: { $gte: cutoff } }] })
-      .select(VIDEO_FIELDS)
-      .sort({ createdAt: -1 })
-      .limit(RECENT_POOL)
-      .lean<CandidateRow[]>(),
+    videos.listVisibleByCreators(viewerId, subscribedCreatorIds, SUBSCRIBED_POOL),
+    videos.listVisibleSince(viewerId, cutoff, RECENT_POOL),
   ])
 
   // Deduped by id, remembering which pool each row arrived through — see
   // `mergeCandidatePools` for why the subscription answer wins an overlap.
-  const merged = mergeCandidatePools(subscribedVideos, recentVideos, (row) => String(row._id))
+  const merged = mergeCandidatePools(subscribedVideos, recentVideos, (row) => row.id)
   const rowById = new Map(merged.map((entry) => [entry.id, entry.row]))
 
   const signals = await loadViewerSignals(viewerId, subscribedCreatorIds)

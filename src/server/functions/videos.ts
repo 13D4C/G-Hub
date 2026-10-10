@@ -11,11 +11,7 @@ import { type TranscodeStatus } from '@/lib/transcode-status'
 import { recordAdImpression } from '@/server/lib/ad-impression'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { getUserId, requireUserId } from '@/server/auth/require-user'
-import { MembershipTierModel } from '@/server/db/models/membership-tier'
-import { UserModel } from '@/server/db/models/user'
-import { VideoModel } from '@/server/db/models/video'
-import { VideoCommentModel } from '@/server/db/models/video-comment'
-import { VideoLikeModel } from '@/server/db/models/video-like'
+import { membershipTiers, users, videoComments, videoLikes, videos as videoRepo } from '@/server/data'
 import { pickPrerollAd, type PrerollAd } from '@/server/lib/ad-decision'
 import {
   deleteObject,
@@ -26,7 +22,6 @@ import {
 import {
   loadSubscribedCreatorIds,
   requirePlayableVideo,
-  visibleToViewerFilter,
   type ChannelAccess,
 } from '@/server/lib/entitlement'
 import { channelFrom, summarizeVideosForViewer } from '@/server/lib/video-summary'
@@ -56,9 +51,7 @@ export type { VideoChannel }
 async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
   if (!uploadedBy) return null
 
-  const creator = await UserModel.findById(uploadedBy)
-    .select('name channelName channelCurrency avatarUrl')
-    .lean()
+  const creator = await users.findById(String(uploadedBy))
   return creator ? channelFrom(creator) : null
 }
 
@@ -74,7 +67,7 @@ async function channelOf(uploadedBy: unknown): Promise<VideoChannel | null> {
 async function tierNameOf(requiredTierId: unknown): Promise<string> {
   if (!requiredTierId) return ''
 
-  const tier = await MembershipTierModel.findById(requiredTierId).select('name').lean()
+  const tier = await membershipTiers.findById(String(requiredTierId))
   return tier?.name ?? ''
 }
 
@@ -96,10 +89,7 @@ export const listVideos = createServerFn({ method: 'GET' }).handler(async () => 
   const viewerId = await getUserId()
   await connectToDatabase()
 
-  const videos = await VideoModel.find(visibleToViewerFilter(viewerId))
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean()
+  const videos = await videoRepo.listVisible(viewerId, 50)
 
   return summarizeVideosForViewer(videos, viewerId)
 })
@@ -118,12 +108,7 @@ export const listSubscribedVideos = createServerFn({ method: 'GET' }).handler(
     if (subscriptions.length === 0) return { hasSubscriptions: false, videos: [] }
 
     const subscribedCreatorIds = subscriptions.map((s) => s.creatorId)
-    const videos = await VideoModel.find({
-      $and: [visibleToViewerFilter(viewerId), { uploadedBy: { $in: subscribedCreatorIds } }],
-    })
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean()
+    const videos = await videoRepo.listVisibleByCreators(viewerId, subscribedCreatorIds, 100)
 
     const access = new Map<string, ChannelAccess>(
       subscriptions.map((s) => [s.creatorId, { subscribed: true, tierId: s.tierId, isOwner: false }]),
@@ -283,14 +268,14 @@ export const getVideoById = createServerFn({ method: 'GET' })
     // viewers and not at all for anonymous ones. That is one reason ad revenue is
     // reported as an estimate rather than as settled money.
     await Promise.all([
-      VideoModel.updateOne({ _id: video._id }, { $inc: { viewCount: 1 } }),
+      videoRepo.incrementView(video.id),
       recordWatch(viewerId, video),
       preroll ? recordAdImpression(viewerId, video, preroll.id) : null,
     ])
 
     return {
       video: {
-        id: String(video._id),
+        id: video.id,
         title: video.title,
         description: video.description,
         // `transcode` is optional throughout, and not defensively: `.lean()` does not apply
@@ -399,9 +384,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
   .handler(async ({ data }): Promise<LockedVideo | null> => {
     await connectToDatabase()
 
-    const video = await VideoModel.findById(data.videoId)
-      .select('title description uploadedBy requiredTierId visibility priceCents')
-      .lean()
+    const video = await videoRepo.findById(data.videoId)
     if (!video) return null
     // Unreachable today — the `/video` route only calls this after a paywall
     // rejection, and a private video reports as missing instead. Belt and braces, so
@@ -410,7 +393,7 @@ export const getLockedVideo = createServerFn({ method: 'GET' })
     if (video.visibility === 'private') return null
 
     return {
-      id: String(video._id),
+      id: video.id,
       title: video.title,
       description: video.description,
       channel: await channelOf(video.uploadedBy),
@@ -479,15 +462,7 @@ export const createVideo = createServerFn({ method: 'POST' })
     // orphaned object in SeaweedFS. Must be the uploader's own live tier, or a
     // hand-built form could gate a video behind another creator's ladder.
     const requiredTierId = requestedTierId
-      ? ((
-          await MembershipTierModel.findOne({
-            _id: requestedTierId,
-            creatorId: userId,
-            active: true,
-          })
-            .select('_id')
-            .lean()
-        )?._id ?? null)
+      ? ((await membershipTiers.findActiveOwned(requestedTierId, userId))?.id ?? null)
       : null
     if (requestedTierId && !requiredTierId) throw new Error(CHANNEL_ERRORS.tierNotYours)
 
@@ -505,23 +480,23 @@ export const createVideo = createServerFn({ method: 'POST' })
     const body = new Uint8Array(await file.arrayBuffer())
     const url = await uploadObject({ key, body, contentType: file.type })
 
-    const video = await VideoModel.create({
-      _id: videoId,
+    const video = await videoRepo.create({
+      id: String(videoId),
       title,
       description,
       url,
+      uploadedBy: userId,
       durationSeconds,
       visibility,
-      requiredTierId,
+      requiredTierId: requiredTierId ? String(requiredTierId) : null,
       priceCents,
-      uploadedBy: userId,
       // A `subscriber` video is the subscription's product, and a `buyer` one is the
       // purchase's; running an ad in front of either would be selling the same minute
       // twice. A private one has no audience to advertise to.
       adsEnabled: visibility === 'public',
     })
 
-    return { id: String(video._id) }
+    return { id: video.id }
   })
 
 const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id')
@@ -538,13 +513,13 @@ export const updateVideoDetails = createServerFn({ method: 'POST' })
     const userId = await requireUserId()
     await connectToDatabase()
 
-    const video = await VideoModel.findOneAndUpdate(
-      { _id: data.videoId, uploadedBy: userId },
-      { $set: { title: data.title, description: data.description } },
-    ).lean()
+    const video = await videoRepo.updateDetails(data.videoId, userId, {
+      title: data.title,
+      description: data.description,
+    })
     if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
-    return { id: String(video._id), title: data.title, description: data.description }
+    return { id: video.id, title: data.title, description: data.description }
   })
 
 const deleteVideoSchema = z.object({ videoId: objectId })
@@ -555,15 +530,12 @@ export const deleteVideo = createServerFn({ method: 'POST' })
     const userId = await requireUserId()
     await connectToDatabase()
 
-    const video = await VideoModel.findOneAndDelete({
-      _id: data.videoId,
-      uploadedBy: userId,
-    }).lean()
+    const video = await videoRepo.deleteOwned(data.videoId, userId)
     if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
     await Promise.all([
-      VideoCommentModel.deleteMany({ videoId: video._id }),
-      VideoLikeModel.deleteMany({ videoId: video._id }),
+      videoComments.deleteByVideo(video.id),
+      videoLikes.removeByVideo(video.id),
     ])
 
     // A video is a tree now, not an object: the original upload, plus a manifest and every
@@ -574,7 +546,7 @@ export const deleteVideo = createServerFn({ method: 'POST' })
     // Still best-effort and still after the delete: the row is already gone, and a storage
     // failure here must not fail a delete the database has committed.
     try {
-      const prefix = `videos/${video._id}/`
+      const prefix = `videos/${video.id}/`
       await deletePrefix(prefix)
 
       const legacyKey = keyFromStoredUrl(video.url)
@@ -585,5 +557,5 @@ export const deleteVideo = createServerFn({ method: 'POST' })
       console.error(`Failed to delete storage objects for video ${data.videoId}:`, error)
     }
 
-    return { id: String(video._id) }
+    return { id: video.id }
   })

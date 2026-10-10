@@ -8,12 +8,10 @@ import { VIDEO_VISIBILITIES } from '@/lib/video-visibility'
 import { requireUserId } from '@/server/auth/require-user'
 import {
   MAX_TIERS_PER_CREATOR,
-  MembershipTierModel,
   TIER_DESCRIPTION_MAX_LENGTH,
   TIER_NAME_MAX_LENGTH,
 } from '@/server/db/models/membership-tier'
-import { UserModel } from '@/server/db/models/user'
-import { VideoModel } from '@/server/db/models/video'
+import { DuplicateTierName, membershipTiers, users, videos } from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 
@@ -45,11 +43,6 @@ const objectId = z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid id')
  * `server/lib` into a client bundle.
  */
 export type { MembershipTierView }
-
-/** Mongo's duplicate-key error, raised here by the unique `(creatorId, name)` index. */
-function isDuplicateKeyError(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 11000
-}
 
 /**
  * The signed-in creator's own ladder. Distinct from the copy `getChannel` returns
@@ -93,23 +86,23 @@ export const createMembershipTier = createServerFn({ method: 'POST' })
     const creatorId = await requireUserId()
     await connectToDatabase()
 
-    const live = await MembershipTierModel.countDocuments({ creatorId, active: true })
+    const live = await membershipTiers.countActiveByCreator(creatorId)
     if (live >= MAX_TIERS_PER_CREATOR) throw new Error(CHANNEL_ERRORS.tierLimitReached)
 
     // Tiers are priced in the channel's currency rather than each in its own: Stripe
     // bills one subscription per channel, and a ladder priced in two currencies is a
     // ladder a viewer cannot compare.
-    const creator = await UserModel.findById(creatorId).select('channelCurrency').lean()
+    const creator = await users.findById(creatorId)
 
     try {
-      const tier = await MembershipTierModel.create({
-        creatorId,
+      const tier = await membershipTiers.create(creatorId, {
         ...data,
+        description: data.description ?? '',
         currency: creator?.channelCurrency || 'usd',
       })
-      return { id: String(tier._id) }
+      return { id: tier.id }
     } catch (err) {
-      if (isDuplicateKeyError(err)) throw new Error(CHANNEL_ERRORS.duplicateTierName)
+      if (err instanceof DuplicateTierName) throw new Error(CHANNEL_ERRORS.duplicateTierName)
       throw err
     }
   })
@@ -137,20 +130,14 @@ export const updateMembershipTier = createServerFn({ method: 'POST' })
 
     let updated
     try {
-      // Ownership lives in the filter rather than in a separate read, so there is no
-      // window between the check and the write.
-      updated = await MembershipTierModel.findOneAndUpdate(
-        { _id: tierId, creatorId, active: true },
-        { $set: fields },
-        { returnDocument: 'after' },
-      )
+      updated = await membershipTiers.updateOwn(tierId, creatorId, fields)
     } catch (err) {
-      if (isDuplicateKeyError(err)) throw new Error(CHANNEL_ERRORS.duplicateTierName)
+      if (err instanceof DuplicateTierName) throw new Error(CHANNEL_ERRORS.duplicateTierName)
       throw err
     }
     if (!updated) throw new Error(CHANNEL_ERRORS.tierNotFound)
 
-    return { id: String(updated._id) }
+    return { id: updated.id }
   })
 
 /**
@@ -170,10 +157,7 @@ export const archiveMembershipTier = createServerFn({ method: 'POST' })
     const creatorId = await requireUserId()
     await connectToDatabase()
 
-    const archived = await MembershipTierModel.findOneAndUpdate(
-      { _id: data.tierId, creatorId, active: true },
-      { $set: { active: false } },
-    )
+    const archived = await membershipTiers.archive(data.tierId, creatorId)
     if (!archived) throw new Error(CHANNEL_ERRORS.tierNotFound)
 
     return { id: data.tierId }
@@ -232,29 +216,18 @@ export const updateVideoAccess = createServerFn({ method: 'POST' })
       }
 
       if (tierId) {
-        const tier = await MembershipTierModel.findOne({
-          _id: tierId,
-          creatorId,
-          active: true,
-        })
-          .select('_id')
-          .lean()
+        const tier = await membershipTiers.findActiveOwned(tierId, creatorId)
         // Rejected as "no longer exists" rather than "not yours": whether another
         // creator's tier exists is not this caller's business.
         if (!tier) throw new Error(CHANNEL_ERRORS.tierNotYours)
       }
 
-      const video = await VideoModel.findOneAndUpdate(
-        { _id: data.videoId, uploadedBy: creatorId },
-        {
-          $set: {
-            visibility: data.visibility,
-            requiredTierId: tierId,
-            priceCents,
-            adsEnabled: data.visibility === 'public',
-          },
-        },
-      )
+      const video = await videos.updateGate(data.videoId, creatorId, {
+        visibility: data.visibility,
+        requiredTierId: tierId,
+        priceCents,
+        adsEnabled: data.visibility === 'public',
+      })
       // Does not distinguish "gone" from "not yours", same as `deleteComment`.
       if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 

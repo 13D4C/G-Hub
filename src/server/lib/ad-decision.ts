@@ -1,4 +1,4 @@
-import { AdModel } from '@/server/db/models/ad'
+import { ads as adsRepo } from '@/server/data'
 import { signMediaUrl } from '@/server/lib/media-url'
 
 export type PrerollAd = {
@@ -20,7 +20,7 @@ export type PrerollAd = {
  * Assumes the caller has already connected to the database.
  */
 export async function pickPrerollAd(): Promise<PrerollAd | null> {
-  const ads = await AdModel.find({ active: true }).lean()
+  const ads = await adsRepo.listActive()
   if (ads.length === 0) return null
 
   const totalWeight = ads.reduce((sum, ad) => sum + Math.max(ad.weight ?? 1, 0), 0)
@@ -40,7 +40,7 @@ export async function pickPrerollAd(): Promise<PrerollAd | null> {
   if (!mediaUrl) return null
 
   return {
-    id: String(picked._id),
+    id: picked.id,
     mediaUrl,
     durationSeconds: picked.durationSeconds,
     clickThroughUrl: picked.clickThroughUrl,

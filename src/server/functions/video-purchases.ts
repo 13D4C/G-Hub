@@ -4,8 +4,7 @@ import { CHANNEL_ERRORS } from '@/lib/channel-errors'
 import { INTERACTION_ERRORS } from '@/lib/interaction-errors'
 import { isSellablePrice } from '@/lib/video-price'
 import { requireUserId } from '@/server/auth/require-user'
-import { UserModel } from '@/server/db/models/user'
-import { VideoModel } from '@/server/db/models/video'
+import { users, videos } from '@/server/data'
 import { connectToDatabase } from '@/server/db/mongoose'
 import { hasPurchasedVideo } from '@/server/lib/entitlement'
 import { PAYMENT_KIND_VIDEO_PURCHASE } from '@/server/lib/payment-kind'
@@ -61,9 +60,7 @@ export const startVideoPurchaseCheckout = createServerFn({ method: 'POST' })
     const buyerId = await requireUserId()
     await connectToDatabase()
 
-    const video = await VideoModel.findById(data.videoId)
-      .select('title uploadedBy visibility priceCents')
-      .lean()
+    const video = await videos.findById(data.videoId)
     if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
     if (video.visibility !== 'buyer') throw new Error(CHANNEL_ERRORS.videoNotForSale)
 
@@ -82,16 +79,16 @@ export const startVideoPurchaseCheckout = createServerFn({ method: 'POST' })
     // something the viewer already owns. This check is the real guard — the
     // `(buyerId, videoId)` index is deliberately not unique, for the reasons given on
     // the model — so it runs before any session is created.
-    if (await hasPurchasedVideo(buyerId, video._id)) {
+    if (await hasPurchasedVideo(buyerId, video.id)) {
       throw new Error(CHANNEL_ERRORS.alreadyPurchased)
     }
 
-    const creator = await UserModel.findById(creatorId).select('channelCurrency').lean()
+    const creator = await users.findById(creatorId)
     if (!creator) throw new Error(CHANNEL_ERRORS.channelNotFound)
 
     const currency = creator.channelCurrency || 'usd'
     const customerId = await ensureCustomerId(buyerId)
-    const videoId = String(video._id)
+    const videoId = video.id
     const returnUrl = videoReturnUrl(videoId)
 
     const session = await getStripe().checkout.sessions.create({
@@ -153,7 +150,7 @@ export const confirmVideoPurchase = createServerFn({ method: 'POST' })
     const buyerId = await requireUserId()
     await connectToDatabase()
 
-    const user = await UserModel.findById(buyerId).select('stripeCustomerId').lean()
+    const user = await users.findById(buyerId)
     const session = await getStripe().checkout.sessions.retrieve(data.sessionId)
 
     const customerId =

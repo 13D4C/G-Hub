@@ -7,9 +7,9 @@ import {
   parseIdToken,
   type GoogleProfile,
 } from '@/server/auth/google'
+import { isAllowedEmail } from '@/lib/email-domain'
 import { useAuthSession, useOAuthSession } from '@/server/auth/session'
-import { UserModel } from '@/server/db/models/user'
-import { connectToDatabase } from '@/server/db/mongoose'
+import { users } from '@/server/data'
 
 function redirectTo(path: string): Response {
   return new Response(null, { status: 302, headers: { location: path } })
@@ -27,26 +27,26 @@ function matchesState(received: string, expected: string): boolean {
 
 /** Finds the account for a Google profile, linking or creating one as needed. */
 async function resolveUser(profile: GoogleProfile) {
-  const existingByGoogleId = await UserModel.findOne({ googleId: profile.sub })
+  const existingByGoogleId = await users.findByGoogleId(profile.sub)
   if (existingByGoogleId) {
     if (profile.avatarUrl && existingByGoogleId.avatarUrl !== profile.avatarUrl) {
-      existingByGoogleId.avatarUrl = profile.avatarUrl
-      await existingByGoogleId.save()
+      await users.setAvatar(existingByGoogleId.id, profile.avatarUrl)
     }
     return existingByGoogleId
   }
 
   // Google verified this email address, so it is safe to adopt an account that already uses it.
-  const existingByEmail = await UserModel.findOne({ email: profile.email })
+  const existingByEmail = await users.findByEmail(profile.email)
   if (existingByEmail) {
-    existingByEmail.googleId = profile.sub
-    if (!existingByEmail.name) existingByEmail.name = profile.name
-    if (profile.avatarUrl) existingByEmail.avatarUrl = profile.avatarUrl
-    await existingByEmail.save()
+    await users.linkGoogle(existingByEmail.id, {
+      googleId: profile.sub,
+      name: existingByEmail.name ? undefined : profile.name,
+      avatarUrl: profile.avatarUrl,
+    })
     return existingByEmail
   }
 
-  return UserModel.create({
+  return users.create({
     email: profile.email,
     googleId: profile.sub,
     name: profile.name,
@@ -100,12 +100,15 @@ export const Route = createFileRoute('/api/auth/google/callback')({
           return redirectWithError('email_not_verified')
         }
 
-        await connectToDatabase()
+        if (!isAllowedEmail(profile.email)) {
+          return redirectWithError('email_domain')
+        }
+
         const user = await resolveUser(profile)
 
         // eslint-disable-next-line react-hooks/rules-of-hooks -- not a React hook; see src/server/auth/session.ts
         const session = await useAuthSession()
-        await session.update({ userId: String(user._id) })
+        await session.update({ userId: user.id })
 
         return redirectTo(destination)
       },

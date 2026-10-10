@@ -5,6 +5,7 @@
  */
 export const AUTH_ERRORS = {
   emailTaken: 'An account with this email already exists.',
+  emailDomain: 'Only @kmitl.ac.th email addresses can be used.',
   invalidCredentials: 'Invalid email or password.',
   authRequired: 'Please sign in to continue.',
 } as const

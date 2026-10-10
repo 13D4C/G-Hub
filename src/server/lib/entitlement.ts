@@ -5,10 +5,7 @@ import type { Types } from 'mongoose'
 // specifiers. Vite resolves these identically, so nothing else changes — but rewriting
 // them back to `@/` breaks that check.
 import { INTERACTION_ERRORS } from '../../lib/interaction-errors.ts'
-import { ChannelSubscriptionModel } from '../db/models/channel-subscription.ts'
-import { MembershipTierModel } from '../db/models/membership-tier.ts'
-import { VideoModel } from '../db/models/video.ts'
-import { VideoPurchaseModel } from '../db/models/video-purchase.ts'
+import { channelSubscriptions, membershipTiers, videoPurchases, videos } from '../data/index.ts'
 import { ENTITLING_STATUSES, isEntitled, tierStanding } from './entitlement-status.ts'
 import { tierUnlocks, type TierRef } from './tier-access.ts'
 
@@ -55,9 +52,7 @@ export async function getChannelAccess(
   if (!viewerId || !creatorId) return NO_ACCESS
   if (viewerId === String(creatorId)) return { subscribed: true, tierId: null, isOwner: true }
 
-  const sub = await ChannelSubscriptionModel.findOne({ subscriberId: viewerId, creatorId })
-    .select('status currentPeriodEnd tierId')
-    .lean()
+  const sub = await channelSubscriptions.find(viewerId, String(creatorId))
   if (!isEntitled(sub ?? null)) return NO_ACCESS
 
   return { subscribed: true, tierId: sub?.tierId ? String(sub.tierId) : null, isOwner: false }
@@ -93,18 +88,13 @@ export async function loadSubscribedCreatorIds(
 ): Promise<SubscribedChannel[]> {
   if (!viewerId) return []
 
-  const rows = await ChannelSubscriptionModel.find({
-    subscriberId: viewerId,
-    status: { $in: [...ENTITLING_STATUSES] },
-  })
-    .select('creatorId tierId status currentPeriodEnd')
-    .lean()
+  const rows = await channelSubscriptions.listBySubscriber(viewerId, ENTITLING_STATUSES)
 
   return rows
     .filter((row) => isEntitled(row, now))
     .map((row) => ({
-      creatorId: String(row.creatorId),
-      tierId: row.tierId ? String(row.tierId) : null,
+      creatorId: row.creatorId,
+      tierId: row.tierId,
     }))
 }
 
@@ -139,10 +129,8 @@ export async function loadTierRanks(
   const wanted = [...new Set(ids.filter(Boolean).map(String))]
   if (wanted.length === 0) return new Map()
 
-  const tiers = await MembershipTierModel.find({ _id: { $in: wanted } })
-    .select('rank')
-    .lean()
-  return new Map(tiers.map((t) => [String(t._id), t.rank]))
+  const tiers = await membershipTiers.listByIds(wanted)
+  return new Map(tiers.map((t) => [t.id, t.rank]))
 }
 
 /** A tier id paired with the rank a `loadTierRanks` map holds for it. */
@@ -189,7 +177,7 @@ export async function hasPurchasedVideo(
   videoId: string | Types.ObjectId,
 ): Promise<boolean> {
   if (!viewerId) return false
-  return !!(await VideoPurchaseModel.exists({ buyerId: viewerId, videoId }))
+  return videoPurchases.existsForBuyer(viewerId, String(videoId))
 }
 
 /**
@@ -208,10 +196,7 @@ export async function loadPurchasedVideoIds(
   const wanted = [...new Set(videoIds.filter(Boolean).map(String))]
   if (wanted.length === 0) return new Set()
 
-  const rows = await VideoPurchaseModel.find({ buyerId: viewerId, videoId: { $in: wanted } })
-    .select('videoId')
-    .lean()
-  return new Set(rows.map((row) => String(row.videoId)))
+  return videoPurchases.purchasedVideoIds(viewerId, wanted)
 }
 
 /**
@@ -233,7 +218,7 @@ export async function loadPurchasedVideoIds(
  * Assumes the caller has already connected to the database.
  */
 export async function requirePlayableVideo(videoId: string, viewerId: string | null) {
-  const video = await VideoModel.findById(videoId).lean()
+  const video = await videos.findById(videoId)
   if (!video) throw new Error(INTERACTION_ERRORS.videoNotFound)
 
   // Computed even for a public video: one indexed lookup, and a `subscribed` flag
@@ -259,7 +244,7 @@ export async function requirePlayableVideo(videoId: string, viewerId: string | n
     // priced it separately from the membership and honouring the subscription here
     // would give away the thing they just put a price on. The creator is the only
     // bypass — they never pay for their own work.
-    purchased = access.isOwner || (await hasPurchasedVideo(viewerId, video._id))
+    purchased = access.isOwner || (await hasPurchasedVideo(viewerId, video.id))
     if (!purchased) throw new Error(INTERACTION_ERRORS.purchaseRequired)
   }
 
