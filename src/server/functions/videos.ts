@@ -495,11 +495,11 @@ export const createVideo = createServerFn({ method: 'POST' })
     // the original and every rendition the transcoder later writes then live under one
     // `videos/{id}/` prefix, which is what lets `deleteVideo` sweep them in a single pass.
     const videoId = new Types.ObjectId()
-    // The random segment is what protects a paywalled video. These objects are stored
-    // public-read, so an unguessable key is the only thing between a `buyer` video and
-    // anyone who can read the id out of a `/video?id=` URL — which is everybody. The key
-    // has always bought that obscurity with a UUID; this keeps it while giving the video
-    // a prefix of its own. `safeFileName` stops the uploader's own filename from
+    // The random segment is defence in depth. Every url handed out is signed (`media-url.ts`)
+    // and the bucket is meant to refuse anonymous reads, so the key is no longer the only
+    // thing between a `buyer` video and anyone who can read the id out of a `/video?id=`
+    // URL — but a key nobody can guess costs nothing, and keeps each upload in a prefix of
+    // its own. `safeFileName` stops the uploader's own filename from
     // escaping that prefix, which until now it could.
     const key = `videos/${videoId}/${randomUUID()}/${safeFileName(file.name)}`
     const body = new Uint8Array(await file.arrayBuffer())

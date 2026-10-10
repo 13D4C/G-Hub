@@ -154,13 +154,12 @@ const videoSchema = new mongoose.Schema(
        * The random path segment this attempt's output lives under, inside
        * `videos/{_id}/`. Minted fresh by every claim.
        *
-       * Random rather than derived from the video id, and that is a security decision
-       * rather than a naming one. Objects are stored `public-read`, so for a paywalled
-       * video the unguessable key *is* what protects the bytes. A predictable
-       * `videos/{_id}/stream/master.m3u8` is derivable from the id in the `/video?id=`
-       * URL every visitor already sees, which would hand away every `buyer` and
-       * `subscriber` video. `createVideo` has always bought that obscurity with a UUID
-       * in the key; this keeps it.
+       * Random rather than derived from the video id, as defence in depth. Access is
+       * gated by the signed `/api/media` urls (`src/server/lib/media-url.ts`), but a
+       * bucket that still answers anonymous reads would make a predictable
+       * `videos/{_id}/stream/master.m3u8` derivable from the id in the `/video?id=` URL
+       * every visitor already sees — handing away every `buyer` and `subscriber` video.
+       * `createVideo` buys the same obscurity with a UUID in the key; this keeps it.
        *
        * A fresh segment per attempt also means a retry cannot interleave its output with
        * a dead attempt's — the old tree is simply orphaned, and swept on the next success.

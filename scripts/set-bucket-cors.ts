@@ -3,6 +3,12 @@
  *
  * Run: npm run set-bucket-cors
  *
+ * No longer needed by the app itself: browsers now fetch media through the same-origin
+ * `/api/media` route (option 4 below, taken for anti-piracy rather than CORS), which needs no
+ * CORS at all. Kept for a deployment that points a CDN at the bucket. Once the bucket refuses
+ * anonymous reads, the probe below fails by design — `npm run check:media-private` is the
+ * check that matters then.
+ *
  * Progressive MP4 playback never needed CORS, because a `<video src>` element is a no-CORS
  * media load. The adaptive engine fetches manifests and segments over XHR, so every one of
  * them is now a cross-origin request: the app runs on one host and SeaweedFS answers on
