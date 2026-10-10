@@ -1,4 +1,6 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap');
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -22,6 +24,23 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /**
+   * The four revenue categories, in the fixed order `REVENUE_CATEGORIES` declares:
+   * Ad / Subscriptions / Pay-per-view / Tipping, with a fifth spare.
+   *
+   * Tuned for the light paper card the chart sits on rather than for the page's dark
+   * underwater base — nothing in this app ever applies the `.dark` class, so these
+   * `:root` values are the ones that actually render.
+   *
+   * Lightness descends 0.72 -> 0.62 -> 0.52 -> 0.42 across the four on purpose: the
+   * categories stay distinguishable in greyscale, in print and under colour vision
+   * deficiency, so the chart never encodes a category by hue alone.
+   */
+  --chart-1: oklch(0.72 0.15 75);
+  --chart-2: oklch(0.62 0.12 195);
+  --chart-3: oklch(0.52 0.19 300);
+  --chart-4: oklch(0.42 0.14 25);
+  --chart-5: oklch(0.55 0.02 250);
 }
 
 .dark {
@@ -43,9 +62,17 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  /* The same ramp lifted for a dark surface, kept for correctness: no code toggles
+     `.dark` today, so these are not what renders. */
+  --chart-1: oklch(0.86 0.16 82);
+  --chart-2: oklch(0.78 0.13 196);
+  --chart-3: oklch(0.72 0.18 302);
+  --chart-4: oklch(0.78 0.16 28);
+  --chart-5: oklch(0.7 0.02 250);
 }
 
 @theme inline {
+  --font-display: 'Fredoka', ui-rounded, 'Segoe UI', sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -68,13 +95,70 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    zoom: 125%;
+  }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .bg-tile-navbar {
+    background-image: 
+    linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), 
+    url('/texture/metro-tiles.jpg');
+    background-repeat: repeat;
+    background-size: 400px auto;
+    background-position: center 27px;
+  }
+
+  .bg-underwater-base {
+    background-color: #1d1404;
+  }
+
+  .underwater-tint {
+    background-image: linear-gradient(180deg, rgba(42, 24, 4, 0.62), rgba(16, 10, 2, 0.92));
+    mix-blend-mode: multiply;
+  }
+
+  .underwater-caustics {
+    background-image:
+      radial-gradient(ellipse at 20% 20%, rgba(248, 217, 43, 0.16), transparent 80%),
+      radial-gradient(ellipse at 80% 65%, rgba(216, 213, 37, 0.14), transparent 75%);
+    background-repeat: no-repeat, no-repeat;
+    background-size: 150% 150%, 150% 150%;
+    mix-blend-mode: screen;
+    animation: tile-caustics 20s ease-in-out infinite alternate;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .underwater-caustics {
+      animation: none;
+    }
+  }
+
+  .underwater-vignette {
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.8) 100%);
+  }
+}
+
+@keyframes tile-caustics {
+  0% {
+    background-position: 0% 0%, 100% 100%;
+  }
+  100% {
+    background-position: 18% 12%, 82% 88%;
   }
 }
