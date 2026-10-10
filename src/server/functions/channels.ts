@@ -17,6 +17,7 @@ import {
   tierRefOf,
   tierStanding,
 } from '@/server/lib/entitlement'
+import { signThumbnailUrl } from '@/server/lib/media-url'
 import { isUnlocked } from '@/server/lib/video-unlock'
 import { ensureCustomerId, getAppUrl, getStripe } from '@/server/lib/stripe'
 import { recordSubscriptionInvoice } from '@/server/lib/subscription-invoice-record'
@@ -240,7 +241,7 @@ export const getChannel = createServerFn({ method: 'GET' })
           id: String(v._id),
           title: v.title,
           description: v.description,
-          url: unlocked ? v.url : '',
+          url: unlocked ? signThumbnailUrl(v.url, viewerId) : '',
           durationSeconds: v.durationSeconds,
           visibility,
           premium,

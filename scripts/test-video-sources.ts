@@ -10,9 +10,9 @@
  *
  * The list is ordered policy rather than preference: video.js plays the first entry some
  * registered handler claims, so the tail of this array is the answer to "what happens when
- * adaptive playback is not available" — a device without Media Source Extensions, a
- * transcode that has not finished, or one that failed outright. Every assertion below is
- * really about one of those three.
+ * adaptive playback is not available" — a transcode that has not finished, or one that
+ * failed outright. Once it has finished the server withholds the original, and the list
+ * must then be the manifests alone.
  */
 import assert from 'node:assert/strict'
 import {
@@ -86,33 +86,40 @@ for (const blank of [null, undefined, '', '   ']) {
   )
 }
 
-// --- the invariant the player depends on -------------------------------------------
+// --- the invariants the player depends on ------------------------------------------
 
 {
-  const every = [
+  const withOriginal = [
     buildVideoSources({ hlsUrl: HLS, dashUrl: DASH, mp4Url: MP4 }),
     buildVideoSources({ hlsUrl: HLS, mp4Url: MP4 }),
     buildVideoSources({ dashUrl: DASH, mp4Url: MP4 }),
     buildVideoSources({ mp4Url: MP4 }),
   ]
 
-  for (const sources of every) {
-    // The one that matters most: where MSE is unavailable nothing claims the manifests, so
-    // a list whose last entry is not the progressive file is a video that silently stops
-    // playing on that device.
+  for (const sources of withOriginal) {
+    // While the original is offered at all it is the last resort, never ahead of a manifest.
     assert.equal(
       sources[sources.length - 1].type,
       VIDEO_MIME.mp4,
-      'the original file is always the last resort',
+      'the original file, when present, is always the last resort',
     )
     assert.ok(sources.length > 0, 'a playable video always yields at least one source')
   }
 }
 
 {
-  // A locked catalogue row: `video-summary.ts` blanks the url for a viewer who may not
-  // play it, and a source list built from that has to offer nothing at all.
-  assert.deepEqual(buildVideoSources({ hlsUrl: HLS, dashUrl: DASH, mp4Url: '' }), [])
+  // A transcoded video: the server withholds the original once the adaptive stream can
+  // replace it, so the list is the manifests alone — the whole-file download is gone.
+  // No progressive entry is invented when the server sent none.
+  assert.deepEqual(buildVideoSources({ hlsUrl: HLS, dashUrl: DASH, mp4Url: '' }), [
+    { src: HLS, type: VIDEO_MIME.hls },
+    { src: DASH, type: VIDEO_MIME.dash },
+  ])
+}
+
+{
+  // A locked row: every url blanked, and a source list built from that offers nothing.
+  assert.deepEqual(buildVideoSources({ hlsUrl: '', dashUrl: '', mp4Url: '' }), [])
   assert.deepEqual(buildVideoSources({ mp4Url: null }), [])
 }
 
