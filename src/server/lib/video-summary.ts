@@ -9,6 +9,7 @@ import {
   tierRefOf,
   type ChannelAccess,
 } from '@/server/lib/entitlement'
+import { signThumbnailUrl } from '@/server/lib/media-url'
 import { isUnlocked } from '@/server/lib/video-unlock'
 
 /**
@@ -147,7 +148,8 @@ export async function summarizeVideosForViewer(
       id: String(v._id),
       title: v.title,
       description: v.description,
-      url: unlocked ? v.url : '',
+      // Signed like every media url that leaves the server; see `signThumbnailUrl`.
+      url: unlocked ? signThumbnailUrl(v.url, viewerId) : '',
       durationSeconds: v.durationSeconds,
       visibility,
       premium,
