@@ -1,4 +1,5 @@
 import { AdModel } from '@/server/db/models/ad'
+import { signMediaUrl } from '@/server/lib/media-url'
 
 export type PrerollAd = {
   id: string
@@ -11,6 +12,10 @@ export type PrerollAd = {
 /**
  * Pick a preroll ad to serve. Chooses among active ads using a weighted random
  * draw (higher `weight` = more likely). Returns null when no active ad exists.
+ *
+ * `mediaUrl` comes back signed, like every media url that leaves the server. It is not bound
+ * to the viewer: an ad is not anybody's content to protect, only a file in the same bucket.
+ * An ad whose stored url is not one of ours cannot be signed, and is not served.
  *
  * Assumes the caller has already connected to the database.
  */
@@ -28,9 +33,15 @@ export async function pickPrerollAd(): Promise<PrerollAd | null> {
       return target < 0
     }) ?? ads[ads.length - 1]
 
+  const mediaUrl = signMediaUrl(picked.mediaUrl, {
+    viewerId: null,
+    durationSeconds: picked.durationSeconds,
+  })
+  if (!mediaUrl) return null
+
   return {
     id: String(picked._id),
-    mediaUrl: picked.mediaUrl,
+    mediaUrl,
     durationSeconds: picked.durationSeconds,
     clickThroughUrl: picked.clickThroughUrl,
     skippableAfterSeconds: picked.skippableAfterSeconds,
