@@ -1,7 +1,6 @@
-import type { Types } from 'mongoose'
 import type { VideoSummary, VideoChannel } from '@/lib/video-summary-types'
 import type { VideoVisibility } from '@/lib/video-visibility'
-import { UserModel } from '@/server/db/models/user'
+import { users, type VideoRow } from '@/server/data'
 import {
   getChannelAccess,
   loadPurchasedVideoIds,
@@ -27,30 +26,17 @@ import { isUnlocked } from '@/server/lib/video-unlock'
  */
 
 /** A reference to another document, as a `.lean()` row reports it. */
-type Ref = Types.ObjectId | string | null | undefined
-
-/** The fields of a video document this needs. A `.lean()` row satisfies it. */
-export type VideoRow = {
-  _id: Types.ObjectId | string
-  title: string
-  description: string
-  url: string
-  durationSeconds: number
-  visibility: string
-  uploadedBy?: Ref
-  requiredTierId?: Ref
-  priceCents?: number | null
-}
+export type { VideoRow } from '@/server/data'
 
 export function channelFrom(creator: {
-  _id: unknown
+  id: string
   name?: string
   channelName?: string
   channelCurrency?: string
   avatarUrl?: string
 }): VideoChannel {
   return {
-    creatorId: String(creator._id),
+    creatorId: creator.id,
     name: creator.channelName || creator.name || 'Untitled channel',
     currency: creator.channelCurrency || 'usd',
     avatarUrl: creator.avatarUrl || '',
@@ -87,11 +73,9 @@ export async function summarizeVideosForViewer(
   // Filter before stringifying: a video with no `uploadedBy` would otherwise become
   // the literal string "undefined", which survives `Boolean` and makes the `$in` a
   // CastError that takes the whole home page down.
-  const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => String(v.uploadedBy)))]
-  const creators = await UserModel.find({ _id: { $in: creatorIds } })
-    .select('name channelName channelCurrency avatarUrl')
-    .lean()
-  const channelById = new Map(creators.map((c) => [String(c._id), channelFrom(c)]))
+  const creatorIds = [...new Set(videos.filter((v) => v.uploadedBy).map((v) => v.uploadedBy!))]
+  const creators = await users.listByIds(creatorIds)
+  const channelById = new Map(creators.map((c) => [c.id, channelFrom(c)]))
 
   // Asked once per *channel* that actually sells something on this page, not once
   // per row, and through the shared helper so the rule (a creator is entitled to
@@ -101,7 +85,7 @@ export async function summarizeVideosForViewer(
     ...new Set(
       videos
         .filter((v) => v.visibility === 'subscriber' && v.uploadedBy)
-        .map((v) => String(v.uploadedBy)),
+        .map((v) => v.uploadedBy!),
     ),
   ]
   const accessEntries: Array<readonly [string, ChannelAccess]> = access
@@ -124,11 +108,11 @@ export async function summarizeVideosForViewer(
   // ownership is a string compare.
   const purchasedIds = await loadPurchasedVideoIds(
     viewerId,
-    videos.filter((v) => v.visibility === 'buyer').map((v) => v._id),
+    videos.filter((v) => v.visibility === 'buyer').map((v) => v.id),
   )
 
   return videos.map((v) => {
-    const creatorId = v.uploadedBy ? String(v.uploadedBy) : null
+    const creatorId = v.uploadedBy
     const visibility = v.visibility as VideoVisibility
     const premium = visibility === 'subscriber'
     const payPerView = visibility === 'buyer'
@@ -141,11 +125,11 @@ export async function summarizeVideosForViewer(
       subscribed: !!entry?.subscribed,
       heldTier: tierRefOf(entry?.tierId ?? null, ranks),
       requiredTier: tierRefOf(v.requiredTierId, ranks),
-      purchased: purchasedIds.has(String(v._id)),
+      purchased: purchasedIds.has(String(v.id)),
     })
 
     return {
-      id: String(v._id),
+      id: String(v.id),
       title: v.title,
       description: v.description,
       // Signed like every media url that leaves the server; see `signThumbnailUrl`.

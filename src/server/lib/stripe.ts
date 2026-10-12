@@ -1,6 +1,6 @@
 import Stripe from 'stripe'
 import { getRequest } from '@tanstack/react-start/server'
-import { UserModel } from '@/server/db/models/user'
+import { users } from '@/server/data'
 
 /**
  * Stripe wiring for channel subscriptions and tips. Mirrors `src/server/auth/google.ts`: the
@@ -66,7 +66,7 @@ export function getAppUrl(): string {
  * Assumes the caller has already connected to the database.
  */
 export async function ensureCustomerId(userId: string): Promise<string> {
-  const user = await UserModel.findById(userId).select('email name stripeCustomerId').lean()
+  const user = await users.findById(userId)
   if (user?.stripeCustomerId) return user.stripeCustomerId
 
   const customer = await getStripe().customers.create({
@@ -79,11 +79,5 @@ export async function ensureCustomerId(userId: string): Promise<string> {
   // Conditional on the field still being empty, so a concurrent double submit keeps
   // whichever id landed first and leaves this one orphaned in the test account,
   // rather than repointing the account at a new customer mid-checkout.
-  const claimed = await UserModel.findOneAndUpdate(
-    { _id: userId, $or: [{ stripeCustomerId: '' }, { stripeCustomerId: null }] },
-    { stripeCustomerId: customer.id },
-    { returnDocument: 'after', projection: { stripeCustomerId: 1 } },
-  ).lean()
-
-  return claimed?.stripeCustomerId || customer.id
+  return users.claimStripeCustomerId(userId, customer.id)
 }

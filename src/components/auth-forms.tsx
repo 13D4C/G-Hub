@@ -145,7 +145,7 @@ export function RegisterForm({ redirectTo }: { redirectTo?: string }) {
     <div className="flex flex-col gap-6 py-6">
       <CardHeader>
         <CardTitle>Create an account</CardTitle>
-        <CardDescription>Join G-Hub with an email address.</CardDescription>
+        <CardDescription>Join G-Hub with your @kmitl.ac.th email.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">

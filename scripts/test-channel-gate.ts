@@ -115,7 +115,7 @@ async function main() {
   )
   const allowed = await requirePlayableVideo(premiumId, viewerId)
   assert.equal(allowed.subscribed, true)
-  assert.equal(String(allowed.video._id), premiumId)
+  assert.equal(String(allowed.video.id), premiumId)
 
   // ...and paying still buys nothing behind the private one.
   assert.equal(

@@ -2,7 +2,7 @@
 // `scripts/test-revenue-ledger.ts` loads this under plain `node
 // --experimental-strip-types`, which resolves neither tsconfig paths nor
 // extensionless specifiers.
-import { SubscriptionInvoiceModel } from '../db/models/subscription-invoice.ts'
+import { subscriptionInvoices } from '../data/index.ts'
 import { getStripe } from './stripe.ts'
 
 /**
@@ -60,23 +60,18 @@ export async function recordSubscriptionInvoice(invoiceId: string): Promise<bool
 
   // Upsert keyed on the invoice, so a replayed webhook settles the same row instead
   // of crediting the creator twice. The whole idempotency story for the ledger.
-  await SubscriptionInvoiceModel.updateOne(
-    { stripeInvoiceId: invoice.id },
-    {
-      subscriberId,
-      creatorId,
-      stripeSubscriptionId,
-      tierId: tierId || null,
-      tierName: tierName ?? '',
-      // What Stripe collected, never `amount_due` or `total`.
-      amountPaidCents: invoice.amount_paid,
-      currency: invoice.currency ?? 'usd',
-      billingReason: invoice.billing_reason ?? '',
-      paidAt,
-      periodStart: invoice.period_start ? new Date(invoice.period_start * 1000) : null,
-      periodEnd: invoice.period_end ? new Date(invoice.period_end * 1000) : null,
-    },
-    { upsert: true },
-  )
+  await subscriptionInvoices.recordByInvoiceId(invoice.id, {
+    subscriberId,
+    creatorId,
+    stripeSubscriptionId,
+    tierId: tierId || null,
+    tierName: tierName ?? '',
+    amountPaidCents: invoice.amount_paid,
+    currency: invoice.currency ?? 'usd',
+    billingReason: invoice.billing_reason ?? '',
+    paidAt,
+    periodStart: invoice.period_start ? new Date(invoice.period_start * 1000) : null,
+    periodEnd: invoice.period_end ? new Date(invoice.period_end * 1000) : null,
+  })
   return true
 }

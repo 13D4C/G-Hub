@@ -20,7 +20,6 @@ import {
   skipTranscode,
   type ClaimedVideo,
 } from './transcode-queue.ts'
-import { connectToDatabase } from '../db/mongoose.ts'
 import { hasFfmpeg } from './ffmpeg.ts'
 import { backoffMsFor, heartbeatMsFor } from './transcode-plan.ts'
 import { transcodeVideo, TranscodeSkipped } from './transcode-runner.ts'
@@ -165,7 +164,6 @@ export function startTranscodeWorker(): WorkerHandle {
     // log a failure that looks alarming and means nothing. Idempotent and cached, so the
     // standalone script calling it first costs nothing.
     try {
-      await connectToDatabase()
     } catch {
       // Leave it to the loop: the database being briefly unreachable at boot is not a
       // reason to never transcode again, and every tick retries.

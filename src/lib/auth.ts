@@ -18,6 +18,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   state_mismatch: 'That sign-in link expired. Please try again.',
   invalid_callback: 'That sign-in link expired. Please try again.',
   email_not_verified: 'Your Google email address is not verified.',
+  email_domain: 'Only @kmitl.ac.th Google accounts can sign in.',
   google_sign_in_failed: 'Google sign-in failed. Please try again.',
 }
 

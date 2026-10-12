@@ -2,7 +2,7 @@ import type Stripe from 'stripe'
 // Relative, `.ts`-suffixed imports for the same reason as `tip-record.ts`:
 // `scripts/settle-payments.ts` loads this under plain `node --experimental-strip-types`,
 // which resolves neither tsconfig paths nor extensionless specifiers.
-import { VideoPurchaseModel } from '../db/models/video-purchase.ts'
+import { videoPurchases } from '../data/index.ts'
 import { classifyPaidSession } from './payment-kind.ts'
 
 /**
@@ -39,18 +39,14 @@ export async function recordVideoPurchase(session: Stripe.Checkout.Session): Pro
 
   // Upsert keyed on the session, so a replayed webhook — or a return that races the
   // webhook — settles the same row instead of selling the video twice.
-  await VideoPurchaseModel.updateOne(
-    { stripeSessionId: session.id },
-    {
-      buyerId,
-      creatorId,
-      videoId,
-      // Taken from Stripe's copy of the session, never from anything a browser sent.
-      // `metadata.priceCents` rides along for auditing and is deliberately not read.
-      amountCents: session.amount_total ?? 0,
-      currency: session.currency ?? 'usd',
-    },
-    { upsert: true },
-  )
+  await videoPurchases.recordBySession(session.id, {
+    buyerId: buyerId as string,
+    creatorId: creatorId as string,
+    videoId: videoId as string,
+    // Taken from Stripe's copy of the session, never from anything a browser sent.
+    // `metadata.priceCents` rides along for auditing and is deliberately not read.
+    amountCents: session.amount_total ?? 0,
+    currency: session.currency ?? 'usd',
+  })
   return true
 }

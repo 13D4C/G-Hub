@@ -1,12 +1,12 @@
 import { createServerFn } from '@tanstack/react-start'
-import { Types } from 'mongoose'
 import { requireUserId } from '@/server/auth/require-user'
-import { ChannelSubscriptionModel } from '@/server/db/models/channel-subscription'
-import { TipModel } from '@/server/db/models/tip'
-import { UserModel } from '@/server/db/models/user'
-import { VideoModel } from '@/server/db/models/video'
-import { VideoPurchaseModel } from '@/server/db/models/video-purchase'
-import { connectToDatabase } from '@/server/db/mongoose'
+import {
+  channelSubscriptions,
+  tips,
+  users,
+  videoPurchases,
+  videos as videoRepo,
+} from '@/server/data'
 import { summarizeTotals, type DashboardTotals } from '@/server/lib/dashboard-totals'
 import { readLadder, type MembershipTierView } from '@/server/lib/tier-ladder'
 import type { TranscodeStatus } from '@/lib/transcode-status'
@@ -67,59 +67,49 @@ export type CreatorDashboard = {
 export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
   async (): Promise<CreatorDashboard> => {
     const creatorId = await requireUserId()
-    await connectToDatabase()
-
     const [creator, tiers, videos, tipsByVideo, salesByVideo, subs] = await Promise.all([
-      UserModel.findById(creatorId).select('name channelName channelCurrency').lean(),
+      users.findById(creatorId),
       // Through the shared reader, so the dashboard and the channel page cannot
       // disagree about what the ladder is.
       readLadder(creatorId),
-      VideoModel.find({ uploadedBy: creatorId })
-        .select(
-          'title description durationSeconds visibility requiredTierId priceCents createdAt viewCount likeCount shareCount transcode.status',
-        )
-        .sort({ createdAt: -1 })
-        .limit(100)
-        .lean(),
+      videoRepo.listByCreator(creatorId, 100),
       // Grouped by video rather than fetched per row, and `null` (a channel
       // donation) groups too — it is what makes the total add up to the tips the
       // channel page shows.
-      TipModel.aggregate<{ _id: unknown; total: number; count: number }>([
-        // Aggregation does no schema casting, so the id has to be an ObjectId here
-        // — a plain string silently matches nothing and every tip total reads zero.
-        { $match: { creatorId: new Types.ObjectId(creatorId) } },
-        { $group: { _id: '$videoId', total: { $sum: '$amountCents' }, count: { $sum: 1 } } },
-      ]),
+      tips.listByCreator(creatorId),
       // The same grouping for pay-per-view sales. Every purchase row is money that
       // actually arrived — see `models/video-purchase.ts` — so no status filter, and
       // unlike tips every group has a video, so these always add up to the rows.
-      VideoPurchaseModel.aggregate<{ _id: unknown; total: number; count: number }>([
-        // ObjectId, not a string, for the same reason as the tip match above.
-        { $match: { creatorId: new Types.ObjectId(creatorId) } },
-        { $group: { _id: '$videoId', total: { $sum: '$amountCents' }, count: { $sum: 1 } } },
-      ]),
+      videoPurchases.listByCreator(creatorId),
       // Filtered in JS through the shared predicate instead of a `status` query, so
       // the "what counts as entitled" rule is not restated here — a row whose
       // renewal webhook never landed must not be counted as paying.
       //
       // ponytail: loads every subscription row for this channel. Swap for an
       // aggregate if a channel ever has more subscribers than fit in memory.
-      ChannelSubscriptionModel.find({ creatorId })
-        .select('status currentPeriodEnd priceCents')
-        .lean(),
+      channelSubscriptions.listByCreator(creatorId),
     ])
 
-    const tipCentsByVideo = new Map(
-      tipsByVideo.map((row) => [row._id ? String(row._id) : null, row.total]),
-    )
-    const salesByVideoId = new Map(salesByVideo.map((row) => [String(row._id), row]))
+    const tipCentsByVideo = new Map<string | null, number>()
+    for (const row of tipsByVideo) {
+      tipCentsByVideo.set(row.videoId, (tipCentsByVideo.get(row.videoId) ?? 0) + row.amountCents)
+    }
+
+    const salesByVideoId = new Map<string, { total: number; count: number }>()
+    for (const row of salesByVideo) {
+      if (!row.videoId) continue
+      const existing = salesByVideoId.get(row.videoId) ?? { total: 0, count: 0 }
+      existing.total += row.amountCents
+      existing.count += 1
+      salesByVideoId.set(row.videoId, existing)
+    }
     return {
       channelName: creator?.channelName || creator?.name || 'Your channel',
       currency: creator?.channelCurrency || 'usd',
       tiers,
       totals: summarizeTotals(videos, tipsByVideo, salesByVideo, subs),
       videos: videos.map((v) => ({
-        id: String(v._id),
+        id: v.id,
         title: v.title,
         description: v.description,
         durationSeconds: v.durationSeconds,
@@ -131,9 +121,9 @@ export const getCreatorDashboard = createServerFn({ method: 'GET' }).handler(
         likeCount: v.likeCount ?? 0,
         shareCount: v.shareCount ?? 0,
         transcodeStatus: (v.transcode?.status as TranscodeStatus | undefined) ?? null,
-        tipCents: tipCentsByVideo.get(String(v._id)) ?? 0,
-        saleCents: salesByVideoId.get(String(v._id))?.total ?? 0,
-        saleCount: salesByVideoId.get(String(v._id))?.count ?? 0,
+        tipCents: tipCentsByVideo.get(v.id) ?? 0,
+        saleCents: salesByVideoId.get(v.id)?.total ?? 0,
+        saleCount: salesByVideoId.get(v.id)?.count ?? 0,
       })),
     }
   },

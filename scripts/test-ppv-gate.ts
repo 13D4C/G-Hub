@@ -145,7 +145,7 @@ async function main() {
 
   const allowed = await requirePlayableVideo(paidId, viewerId)
   assert.equal(allowed.purchased, true)
-  assert.equal(String(allowed.video._id), paidId)
+  assert.equal(String(allowed.video.id), paidId)
 
   // A purchase buys one video, not the creator's catalogue.
   assert.equal(

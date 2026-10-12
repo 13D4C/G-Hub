@@ -37,7 +37,7 @@ import {
   getBucketCors,
   putBucketCors,
   uploadObject,
-} from '../src/server/storage/seaweed.ts'
+} from '../src/server/storage/object-store.ts'
 
 /** The origin a browser would send. Override when testing the deployed app's own host. */
 const origin = process.argv.find((a) => a.startsWith('--origin='))?.slice('--origin='.length)

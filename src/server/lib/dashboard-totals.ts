@@ -15,8 +15,8 @@ import { isEntitled, type EntitlementState } from './entitlement-status.ts'
  */
 
 export type CountedVideo = { viewCount?: number; likeCount?: number; shareCount?: number }
-export type TipGroup = { total: number; count: number }
-/** Identical shape to a tip group — money and a count, grouped per video. */
+export type TipGroup = { amountCents: number }
+/** Identical shape to a tip row — one payment that actually arrived. */
 export type SaleGroup = TipGroup
 export type CountedSubscription = EntitlementState & { priceCents?: number }
 
@@ -52,12 +52,12 @@ export function summarizeTotals(
     views: videos.reduce((sum, v) => sum + (v.viewCount ?? 0), 0),
     likes: videos.reduce((sum, v) => sum + (v.likeCount ?? 0), 0),
     shares: videos.reduce((sum, v) => sum + (v.shareCount ?? 0), 0),
-    // Includes channel donations, whose group has no video to sit under.
-    tipCents: tipGroups.reduce((sum, row) => sum + row.total, 0),
-    tipCount: tipGroups.reduce((sum, row) => sum + row.count, 0),
+    // Includes channel donations, which carry no video to sit under.
+    tipCents: tipGroups.reduce((sum, row) => sum + row.amountCents, 0),
+    tipCount: tipGroups.length,
     // Every sale has a video, unlike a tip, so these always add up to the rows.
-    saleCents: saleGroups.reduce((sum, row) => sum + row.total, 0),
-    saleCount: saleGroups.reduce((sum, row) => sum + row.count, 0),
+    saleCents: saleGroups.reduce((sum, row) => sum + row.amountCents, 0),
+    saleCount: saleGroups.length,
     subscribers: active.length,
     monthlyCents: active.reduce((sum, sub) => sum + (sub.priceCents ?? 0), 0),
   }

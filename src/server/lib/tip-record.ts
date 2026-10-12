@@ -2,7 +2,7 @@ import type Stripe from 'stripe'
 // Relative, `.ts`-suffixed import for the same reason as `entitlement.ts`:
 // `scripts/settle-payments.ts` loads this under plain `node --experimental-strip-types`,
 // which resolves neither tsconfig paths nor extensionless specifiers.
-import { TipModel } from '../db/models/tip.ts'
+import { tips } from '../data/index.ts'
 import { classifyPaidSession } from './payment-kind.ts'
 
 /**
@@ -40,17 +40,13 @@ export async function recordTip(session: Stripe.Checkout.Session): Promise<boole
   // Upsert keyed on the session, so a replayed webhook — or a return that races the
   // webhook — settles the same row instead of crediting the creator twice. This is
   // the whole idempotency story for tips.
-  await TipModel.updateOne(
-    { stripeSessionId: session.id },
-    {
-      supporterId,
-      creatorId,
-      videoId: videoId || null,
-      // Taken from Stripe's copy of the session, never from anything a browser sent.
-      amountCents: session.amount_total ?? 0,
-      currency: session.currency ?? 'usd',
-    },
-    { upsert: true },
-  )
+  await tips.recordBySession(session.id, {
+    supporterId: supporterId as string,
+    creatorId: creatorId as string,
+    videoId: videoId || null,
+    // Taken from Stripe's copy of the session, never from anything a browser sent.
+    amountCents: session.amount_total ?? 0,
+    currency: session.currency ?? 'usd',
+  })
   return true
 }

@@ -1,6 +1,4 @@
-import type { Types } from 'mongoose'
-import { MembershipTierModel } from '@/server/db/models/membership-tier'
-import { VideoModel } from '@/server/db/models/video'
+import { membershipTiers, videos } from '@/server/data'
 
 /**
  * Reading a creator's membership ladder — shared by `listMyMembershipTiers` and by
@@ -38,26 +36,20 @@ export type MembershipTierView = {
  * Assumes the caller has already connected to the database.
  */
 export async function readLadder(
-  creatorId: string | Types.ObjectId,
+  creatorId: string,
 ): Promise<Array<MembershipTierView>> {
-  const tiers = await MembershipTierModel.find({ creatorId, active: true })
-    .sort({ rank: 1, name: 1 })
-    .lean()
+  const tiers = await membershipTiers.listActiveByCreator(String(creatorId))
   if (tiers.length === 0) return []
 
-  const counts = await VideoModel.aggregate<{ _id: unknown; count: number }>([
-    { $match: { requiredTierId: { $in: tiers.map((t) => t._id) } } },
-    { $group: { _id: '$requiredTierId', count: { $sum: 1 } } },
-  ])
-  const countByTier = new Map(counts.map((c) => [String(c._id), c.count]))
+  const countByTier = await videos.countByTier(tiers.map((t) => t.id))
 
   return tiers.map((t) => ({
-    id: String(t._id),
+    id: t.id,
     name: t.name,
-    description: t.description ?? '',
+    description: t.description,
     priceCents: t.priceCents,
-    currency: t.currency || 'usd',
+    currency: t.currency,
     rank: t.rank,
-    videoCount: countByTier.get(String(t._id)) ?? 0,
+    videoCount: countByTier.get(t.id) ?? 0,
   }))
 }

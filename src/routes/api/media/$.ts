@@ -3,7 +3,7 @@ import { getUserId } from '@/server/auth/require-user'
 import { decodePathSegments, mediaRequestAllowed, resolveMediaKey } from '@/server/lib/media-token'
 import { readMediaGrant } from '@/server/lib/media-url'
 import { contentTypeFor } from '@/server/lib/transcode-plan'
-import { getObjectRange, headObject } from '@/server/storage/seaweed'
+import { getObjectRange, headObject } from '@/server/storage/object-store'
 
 /**
  * Every media byte a browser receives: `/api/media/<token>/<file>`.

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+ASSUME_YES=0
+[ "${1:-}" = "--yes" ] && ASSUME_YES=1
+
+TOFU="${TOFU:-tofu}"
+command -v "$TOFU" >/dev/null || { echo "tofu not found; set TOFU=/path/to/tofu" >&2; exit 1; }
+
+if [ ! -f terraform.tfstate ] && [ ! -d .terraform ]; then
+  echo "No OpenTofu state here — nothing was created from this directory."
+  exit 0
+fi
+
+aws sts get-caller-identity >/dev/null || {
+  echo "AWS credentials are not working, so nothing can be deleted." >&2
+  exit 1
+}
+
+REGION=$("$TOFU" output -raw region 2>/dev/null || echo "us-east-1")
+CLUSTER=$("$TOFU" output -raw cluster_name 2>/dev/null || echo "")
+NS=$("$TOFU" output -raw namespace 2>/dev/null || echo "")
+BUCKET=$("$TOFU" output -raw s3_bucket 2>/dev/null || echo "")
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  echo "This permanently deletes:"
+  echo "  - every DynamoDB table (all accounts, videos, comments, payments)"
+  [ -n "$BUCKET" ] && echo "  - the S3 bucket $BUCKET and every uploaded video in it"
+  echo "  - the EKS cluster, its nodes, the load balancer and the container images"
+  echo
+  read -r -p "Type the word destroy to continue: " reply
+  [ "$reply" = "destroy" ] || { echo "Cancelled."; exit 1; }
+fi
+
+if [ -n "$CLUSTER" ] && [ -n "$NS" ] && command -v kubectl >/dev/null; then
+  echo "==> deleting the Kubernetes load balancer"
+  aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1 || true
+  kubectl -n "$NS" delete service web --ignore-not-found --timeout=180s 2>/dev/null || true
+  kubectl delete namespace "$NS" --ignore-not-found --timeout=180s 2>/dev/null || true
+
+  for _ in $(seq 1 18); do
+    LEFT=$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null)
+    CLASSIC=$(aws elb describe-load-balancers --region "$REGION" --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)
+    [ -z "$LEFT" ] && [ -z "$CLASSIC" ] && break
+    sleep 10
+  done
+fi
+
+if [ -n "$BUCKET" ]; then
+  echo "==> emptying s3://$BUCKET"
+  aws s3 rm "s3://$BUCKET" --recursive --region "$REGION" >/dev/null 2>&1 || true
+fi
+
+echo "==> tofu destroy (the cluster takes a few minutes)"
+t0=$SECONDS
+"$TOFU" destroy -auto-approve -input=false
+DESTROY=$((SECONDS - t0))
+
+echo
+echo "==> checking for anything left behind"
+LEFT=0
+check() {
+  local label="$1" found="$2"
+  if [ -n "$found" ] && [ "$found" != "None" ]; then
+    echo "  STILL THERE  $label: $found"
+    LEFT=1
+  else
+    echo "  gone         $label"
+  fi
+}
+
+check "EKS clusters"      "$(aws eks list-clusters --region "$REGION" --query 'clusters' --output text 2>/dev/null)"
+check "EC2 instances"     "$(aws ec2 describe-instances --region "$REGION" --filters Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null)"
+check "load balancers"    "$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerName' --output text 2>/dev/null)"
+check "classic ELBs"      "$(aws elb describe-load-balancers --region "$REGION" --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)"
+check "DynamoDB tables"   "$(aws dynamodb list-tables --region "$REGION" --query 'TableNames' --output text 2>/dev/null)"
+check "S3 buckets"        "$(aws s3api list-buckets --query 'Buckets[].Name' --output text 2>/dev/null)"
+check "ECR repositories"  "$(aws ecr describe-repositories --region "$REGION" --query 'repositories[].repositoryName' --output text 2>/dev/null)"
+check "NAT gateways"      "$(aws ec2 describe-nat-gateways --region "$REGION" --filter Name=state,Values=pending,available --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null)"
+check "Elastic IPs"       "$(aws ec2 describe-addresses --region "$REGION" --query 'Addresses[].AllocationId' --output text 2>/dev/null)"
+check "EBS volumes"       "$(aws ec2 describe-volumes --region "$REGION" --query 'Volumes[].VolumeId' --output text 2>/dev/null)"
+check "non-default VPCs"  "$(aws ec2 describe-vpcs --region "$REGION" --filters Name=isDefault,Values=false --query 'Vpcs[].VpcId' --output text 2>/dev/null)"
+
+echo
+printf '  tofu destroy took %ss\n' "$DESTROY"
+echo
+if [ "$LEFT" -eq 0 ]; then
+  echo "Everything is gone. Nothing in this region is still costing money."
+else
+  echo "Something survived — see above. Anything listed is still billable."
+  echo "An Elastic IP or a load balancer left behind usually means the Service was"
+  echo "still up when the cluster went away. Delete it in the console, then re-run."
+  exit 1
+fi

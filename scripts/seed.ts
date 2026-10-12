@@ -21,8 +21,8 @@ import { connectToDatabase } from '../src/server/db/mongoose.ts'
 import { MembershipTierModel } from '../src/server/db/models/membership-tier.ts'
 import { UserModel } from '../src/server/db/models/user.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
-import { AdModel } from '../src/server/db/models/ad.ts'
-import { uploadObject } from '../src/server/storage/seaweed.ts'
+import { ads } from '../src/server/data/index.ts'
+import { uploadObject } from '../src/server/storage/object-store.ts'
 
 function listMp4(dir: string): string[] {
   if (!existsSync(dir)) return []
@@ -126,11 +126,12 @@ async function main() {
   for (const file of adFiles) {
     const title = titleFromFile(file)
     const url = await upload('ads', file)
-    await AdModel.findOneAndUpdate(
-      { title },
-      { title, mediaUrl: url, skippableAfterSeconds: 3, active: true, weight: 1 },
-      { upsert: true, returnDocument: 'after' },
-    )
+    await ads.upsertByTitle(title, {
+      mediaUrl: url,
+      skippableAfterSeconds: 3,
+      active: true,
+      weight: 1,
+    })
     console.log(`ad record ready: ${title}`)
   }
 

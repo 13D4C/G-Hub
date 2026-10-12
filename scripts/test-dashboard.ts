@@ -35,16 +35,19 @@ const totals = summarizeTotals(
     {},
   ],
   [
-    { total: 500, count: 2 },
-    // The channel-donation group, which has no video row to appear under.
-    { total: 1000, count: 1 },
+    { amountCents: 200 },
+    { amountCents: 300 },
+    // The channel donation, which has no video row to appear under.
+    { amountCents: 1000 },
   ],
   [
-    // Pay-per-view sales. Unlike tips there is no groupless row: every sale is the
+    // Pay-per-view sales. Unlike tips there is no videoless row: every sale is the
     // sale of some video, which is why the dashboard needs no "counted in the total
     // but not in any row" caveat for this column.
-    { total: 200, count: 1 },
-    { total: 900, count: 3 },
+    { amountCents: 200 },
+    { amountCents: 300 },
+    { amountCents: 300 },
+    { amountCents: 300 },
   ],
   [
     { status: 'active', currentPeriodEnd: future, priceCents: 499 },

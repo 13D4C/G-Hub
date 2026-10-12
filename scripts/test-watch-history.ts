@@ -30,6 +30,15 @@ import { connectToDatabase } from '../src/server/db/mongoose.ts'
 import { loadSubscribedCreatorIds } from '../src/server/lib/entitlement.ts'
 import { loadViewerSignals, recordWatch } from '../src/server/lib/watch-history.ts'
 
+/** A Mongoose video document as the repo-shaped `{ id, uploadedBy }` these now take. */
+function ref(video: { _id: unknown; uploadedBy?: unknown }) {
+  return {
+    id: String(video._id),
+    uploadedBy: video.uploadedBy ? String(video.uploadedBy) : null,
+  }
+}
+
+
 const tag = `watch-test-${Date.now()}`
 
 async function main() {
@@ -73,9 +82,9 @@ async function main() {
   })
 
   // --- a rewatch increments, it does not accumulate rows -------------------------
-  await recordWatch(viewerId, first)
-  await recordWatch(viewerId, first)
-  await recordWatch(viewerId, first)
+  await recordWatch(viewerId, ref(first))
+  await recordWatch(viewerId, ref(first))
+  await recordWatch(viewerId, ref(first))
 
   const rows = await VideoViewModel.find({ viewerId, videoId: first._id }).lean()
   assert.equal(rows.length, 1, 'three watches of one video leave one row')
@@ -85,7 +94,7 @@ async function main() {
 
   // --- an anonymous viewer writes nothing at all ---------------------------------
   const before = await VideoViewModel.countDocuments({})
-  await recordWatch(null, first)
+  await recordWatch(null, ref(first))
   assert.equal(
     await VideoViewModel.countDocuments({}),
     before,
@@ -96,13 +105,13 @@ async function main() {
   // The property that makes it safe to await beside the `viewCount` increment. A
   // video id that is not an ObjectId is the realistic version of this: a cast error
   // thrown here would surface as a failed playback of a video that played fine.
-  await recordWatch(viewerId, { _id: 'not-an-object-id', uploadedBy: creator._id })
-  await recordWatch(viewerId, { _id: new mongoose.Types.ObjectId(), uploadedBy: null })
+  await recordWatch(viewerId, { id: 'not-an-object-id', uploadedBy: String(creator._id) })
+  await recordWatch(viewerId, { id: String(new mongoose.Types.ObjectId()), uploadedBy: null })
   console.log('  (the two errors logged above are expected — recordWatch swallowing them)')
 
   // --- signals group per creator --------------------------------------------------
-  await recordWatch(viewerId, second)
-  await recordWatch(viewerId, elsewhere)
+  await recordWatch(viewerId, ref(second))
+  await recordWatch(viewerId, ref(elsewhere))
 
   const signals = await loadViewerSignals(viewerId, [])
   assert.equal(
@@ -111,7 +120,11 @@ async function main() {
     'affinity sums watches across a channel: three of one video plus one of another',
   )
   assert.equal(signals.creatorWatchCounts[String(other._id)], 1, 'and counts other channels apart')
-  assert.equal(signals.watchedVideoIds.length, 3, 'every watched video is reported as seen')
+  assert.equal(
+    signals.watchedVideoIds.length,
+    4,
+    'every watched video is reported as seen, the creatorless one included — only the\n     unparseable id above left no row at all',
+  )
   assert.ok(
     signals.watchedVideoIds.includes(String(first._id)),
     'including the one watched most often',

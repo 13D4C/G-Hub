@@ -11,16 +11,13 @@
  *   npm run recount-likes
  */
 import { connectToDatabase } from '../src/server/db/mongoose.ts'
-import { VideoLikeModel } from '../src/server/db/models/video-like.ts'
+import { videoLikes } from '../src/server/data/index.ts'
 import { VideoModel } from '../src/server/db/models/video.ts'
 
 async function main() {
   await connectToDatabase()
 
-  const grouped = await VideoLikeModel.aggregate<{ _id: unknown; n: number }>([
-    { $group: { _id: '$videoId', n: { $sum: 1 } } },
-  ])
-  const trueCounts = new Map(grouped.map((row) => [String(row._id), row.n]))
+  const trueCounts = await videoLikes.countByVideo()
 
   // Every video, not just those with likes: one whose last like was lost mid-write
   // would otherwise keep a stale positive count forever.

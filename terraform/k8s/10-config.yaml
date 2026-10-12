@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: g-hub
+data:
+  NODE_ENV: "production"
+  DATA_BACKEND: "dynamo"
+  DYNAMODB_TABLE_PREFIX: "__TABLE_PREFIX__"
+  AWS_REGION: "__REGION__"
+  S3_BUCKET: "__S3_BUCKET__"
+  APP_URL: "__APP_URL__"
+  GOOGLE_REDIRECT_URI: "__APP_URL__/api/auth/google/callback"

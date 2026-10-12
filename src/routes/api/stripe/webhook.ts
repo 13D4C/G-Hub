@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import type Stripe from 'stripe'
-import { connectToDatabase } from '@/server/db/mongoose'
 import { settlePaidSession } from '@/server/lib/payment-settle'
 import { recordSubscriptionInvoice } from '@/server/lib/subscription-invoice-record'
 import { getStripe, getWebhookSecret } from '@/server/lib/stripe'
@@ -83,7 +82,6 @@ export const Route = createFileRoute('/api/stripe/webhook')({
         // A tip or a video purchase. `settlePaidSession` re-reads the session and
         // works out which; the id is all that is taken from the event.
         if (event.type === 'checkout.session.completed' && event.data.object.mode === 'payment') {
-          await connectToDatabase()
           await settlePaidSession(event.data.object.id)
           return new Response(null, { status: 204 })
         }
@@ -96,7 +94,6 @@ export const Route = createFileRoute('/api/stripe/webhook')({
         // `customer.subscription.updated`, which the fallthrough below already handles
         // and which is where `currentPeriodEnd` is refreshed.
         if (event.type === 'invoice.paid') {
-          await connectToDatabase()
           await recordSubscriptionInvoice(event.data.object.id)
           return new Response(null, { status: 204 })
         }
@@ -105,7 +102,6 @@ export const Route = createFileRoute('/api/stripe/webhook')({
         // An event we do not act on still gets a 200, or Stripe retries it for days.
         if (!subscriptionId) return new Response(null, { status: 204 })
 
-        await connectToDatabase()
         await syncSubscription(subscriptionId)
 
         return new Response(null, { status: 204 })

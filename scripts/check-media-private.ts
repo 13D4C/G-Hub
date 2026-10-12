@@ -27,15 +27,15 @@ import {
   deleteObject,
   getObjectRange,
   listObjectKeys,
-  publicUrl,
+  publicHttpUrl,
   uploadObject,
-} from '../src/server/storage/seaweed.ts'
+} from '../src/server/storage/object-store.ts'
 
 type Probe = { label: string; key: string }
 
 async function anonymousStatus(key: string): Promise<number | string> {
   try {
-    const response = await fetch(publicUrl(key), { headers: { range: 'bytes=0-0' } })
+    const response = await fetch(publicHttpUrl(key), { headers: { range: 'bytes=0-0' } })
     await response.body?.cancel()
     return response.status
   } catch (error) {
