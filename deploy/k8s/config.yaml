@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: g-hub
+data:
+  NODE_ENV: "production"
+  # DynamoDB tables "g-hub-*" from deploy/terraform/dynamodb.tf. MongoDB is no longer used.
+  DATA_BACKEND: "dynamo"
+  DYNAMODB_TABLE_PREFIX: "g-hub"
+  AWS_REGION: "us-east-1"
+  # Amazon S3. No endpoint or keys: the SDK uses the node's LabRole credentials.
+  S3_BUCKET: "g-hub-media-94dc94a4"
+  # https makes session cookies Secure; Google and Stripe send the browser back here.
+  APP_URL: "https://clouddev.natthapong.net"
+  GOOGLE_REDIRECT_URI: "https://clouddev.natthapong.net/api/auth/google/callback"
+  TRANSCODE_CONCURRENCY: "1"

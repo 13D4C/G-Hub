@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: g-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      containers:
+        - name: worker
+          image: 035567003472.dkr.ecr.us-east-1.amazonaws.com/g-hub:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef: { name: app-config }
+            - secretRef: { name: app-secrets }
+          env:
+            - { name: TRANSCODE_INLINE, value: "1" }
+          resources:
+            requests: { cpu: "1", memory: 1Gi }
+            limits: { memory: 3Gi }

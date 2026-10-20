@@ -15,8 +15,9 @@ function redirectTo(path: string): Response {
   return new Response(null, { status: 302, headers: { location: path } })
 }
 
+// The login page is the one that reads `authError` and shows the reason; the home page ignores it.
 function redirectWithError(reason: string): Response {
-  return redirectTo(`/?authError=${encodeURIComponent(reason)}`)
+  return redirectTo(`/login?authError=${encodeURIComponent(reason)}`)
 }
 
 function matchesState(received: string, expected: string): boolean {
