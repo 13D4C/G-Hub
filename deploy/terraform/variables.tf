@@ -30,7 +30,7 @@ variable "node_disk_size" {
 }
 
 variable "app_domain" {
-  description = "Public hostname of the app. Its DNS is in Cloudflare: a DNS-only CNAME to the ALB."
+  description = "Public hostname of the app. Its Route 53 zone comes from deploy/dns (same name)."
   type        = string
   default     = "clouddev.natthapong.net"
 }

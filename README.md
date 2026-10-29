@@ -85,14 +85,15 @@ a WebGL water ripple, a toilet-paper-roll sidebar, and an upload button that say
 | Payments | Stripe Checkout, Billing Portal and webhooks, test mode only |
 | Auth | Email and password (scrypt) or Google OAuth 2.0 with PKCE, stored in sealed cookie sessions |
 | Tooling | TypeScript 6, oxlint; scripts run on Node's built-in TypeScript stripping |
-| Delivery | Docker (`node:22-alpine`), Amazon EKS behind an ALB (Terraform), ECR, Cloudflare DNS, ACM |
+| Delivery | Docker (`node:22-alpine`), Amazon EKS behind an ALB (Terraform), ECR, Route 53 (delegated from Cloudflare), ACM |
 
 ## System topology
 
 ```mermaid
 flowchart LR
   B["Browser"]
-  CF["Cloudflare DNS<br/>clouddev.natthapong.net<br/>CNAME, DNS only"]
+  CF["Cloudflare DNS<br/>natthapong.net"]
+  R53["Route 53 zone<br/>clouddev.natthapong.net"]
   EXT["Google OAuth · Stripe API"]
 
   subgraph AWS["AWS us-east-1 · VPC 10.0.0.0/16 · 2 availability zones"]
@@ -109,6 +110,8 @@ flowchart LR
   end
 
   B -.->|"name lookup"| CF
+  CF -.->|"NS delegation of clouddev"| R53
+  R53 -.->|"alias A record"| ALB
   B -->|"HTTPS"| ALB
   ALB -->|"HTTP to NodePort 30080"| WEB
   WEB --> EP
@@ -133,7 +136,7 @@ through free gateway endpoints, and everything else (Google, Stripe, ECR) throug
 | DynamoDB | All application data in 12 `g-hub-*` tables; also the transcode job queue (the `by-transcode` index). |
 | S3 | One private bucket holding original uploads, transcoded segments and ad creatives. |
 | Credentials | Pods use the nodes' `LabRole` through the instance metadata service (IMDSv2, hop limit 2). No AWS keys are configured in the app. |
-| Cloudflare | DNS for `natthapong.net`. `clouddev` is a DNS-only CNAME to the ALB, so TLS is the ALB's. |
+| Cloudflare → Route 53 | Cloudflare hosts `natthapong.net` and delegates `clouddev` to a Route 53 zone with four NS records. In that zone, Terraform keeps an alias A record to the ALB and the ACM validation record. |
 | Google, Stripe | Sign-in, and subscriptions / one-time payments / billing portal / webhooks. |
 
 The app itself doesn't depend on this layout. Locally it runs as one process against MongoDB or
@@ -665,8 +668,10 @@ Academy Learner Lab account (region `us-east-1`; every role is `LabRole`). The d
 | File | Creates |
 |---|---|
 | [vpc.tf](deploy/terraform/vpc.tf) | VPC `10.0.0.0/16`; 2 public and 2 private subnets across 2 AZs; internet gateway; a NAT gateway per AZ; gateway endpoints for S3 and DynamoDB |
-| [eks.tf](deploy/terraform/eks.tf) | EKS cluster; a managed node group of 2 × t3.medium (AL2023) in the private subnets, with a launch template that sets the IMDSv2 hop limit to 2 so pods can use the node's `LabRole` |
+| [eks.tf](deploy/terraform/eks.tf) | EKS cluster, with `api` and `audit` control plane logs sent to the CloudWatch log group `/aws/eks/g-hub/cluster` (kept 7 days); a managed node group of 2 × t3.medium (AL2023) in the private subnets, with a launch template that sets the IMDSv2 hop limit to 2 so pods can use the node's `LabRole` |
 | [alb.tf](deploy/terraform/alb.tf) | Application Load Balancer; ACM certificate for `clouddev.natthapong.net`; HTTPS :443 listener; HTTP :80 redirect; target group on NodePort 30080, fed by the node group's ASG |
+| [route53.tf](deploy/terraform/route53.tf) | In the existing `clouddev.natthapong.net` zone: an alias A record to the ALB and the certificate's validation record |
+| [deploy/dns](deploy/dns/main.tf) | A separate, long-lived stack holding only the Route 53 zone, so its nameservers (which Cloudflare points at) survive `terraform destroy` of the app |
 | [dynamodb.tf](deploy/terraform/dynamodb.tf) | The 12 `g-hub-*` tables |
 | [data.tf](deploy/terraform/data.tf) | ECR repository; public access block and owner-enforced objects on the existing media bucket |
 | [deploy/k8s](deploy/k8s) | Namespace `g-hub`; ConfigMap `app-config`; `web` Deployment (×2) + NodePort Service; `worker` Deployment (×1); `secret.sh` writes Secret `app-secrets` from `.env`; `deploy.sh` builds, pushes and rolls out |
@@ -674,13 +679,12 @@ Academy Learner Lab account (region `us-east-1`; every role is `LabRole`). The d
 **First deploy**
 
 1. Put the Learner Lab's credentials ("AWS Details → AWS CLI") in `~/.aws/credentials`.
-2. `cd deploy/terraform && terraform init && terraform apply`. The apply pauses at
-   `aws_acm_certificate_validation.app` until the certificate is validated.
-3. In Cloudflare, add two **DNS-only (grey cloud)** records:
-   - the ACM validation CNAME, which
-     `aws acm describe-certificate --certificate-arn <arn> --query 'Certificate.DomainValidationOptions[0].ResourceRecord'`
-     prints (after the apply, `terraform output acm_validation` shows it too);
-   - `clouddev` → CNAME → `terraform output -raw alb_dns_name`.
+2. **Once only:** `cd deploy/dns && terraform init && terraform apply`, then
+   `terraform output cloudflare_ns_records`. In Cloudflare, remove any other record named
+   `clouddev` (or under it), and add the four NS records it prints, each named `clouddev`.
+   `dig +short NS clouddev.natthapong.net` should then list the `awsdns` servers.
+3. `cd deploy/terraform && terraform init && terraform apply`. It writes the ALB record and the
+   certificate validation record into the zone, and finishes once ACM issues the certificate.
 4. `deploy/k8s/deploy.sh`. It builds a `linux/amd64` image, pushes it to ECR, writes the Secret,
    applies the manifests and restarts both Deployments.
 5. Register `https://clouddev.natthapong.net/api/auth/google/callback` with the Google OAuth client.
@@ -695,6 +699,9 @@ Academy Learner Lab account (region `us-east-1`; every role is `LabRole`). The d
   `kubectl get nodes` stays empty after the lab restarts, terminate the two node instances; the node
   group replaces them and they register fresh.
 - Code changes: `deploy/k8s/deploy.sh`. Config or secret changes only: `SKIP_BUILD=1 deploy/k8s/deploy.sh`.
+- To stop spending credit, `terraform destroy` in `deploy/terraform` (about $6 a day while it
+  exists). Leave `deploy/dns` alone; its zone costs $0.50 a month and keeps Cloudflare's NS records
+  valid for the next apply. Destroy it only when retiring the domain, and remove the NS records then.
 
 ## Other deployment paths
 

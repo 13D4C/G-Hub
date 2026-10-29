@@ -11,6 +11,17 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
     endpoint_private_access = true
   }
+
+  enabled_cluster_log_types = ["api", "audit"]
+
+  depends_on = [aws_cloudwatch_log_group.cluster]
+}
+
+# EKS writes control plane logs to this group by name. Creating it here, before the cluster,
+# keeps the retention at 7 days and lets terraform destroy remove it. Copied from terraform/eks.tf.
+resource "aws_cloudwatch_log_group" "cluster" {
+  name              = "/aws/eks/${var.name}/cluster"
+  retention_in_days = 7
 }
 
 # Pods reach S3 and DynamoDB with the node's LabRole credentials (the lab can't create roles for

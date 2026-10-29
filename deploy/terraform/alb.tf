@@ -63,8 +63,8 @@ resource "aws_lb_target_group" "web" {
   }
 }
 
-# HTTPS for var.app_domain. Its DNS is in Cloudflare, which Terraform doesn't manage, so the
-# validation CNAME (output "acm_validation") is added there by hand while the apply waits.
+# HTTPS for var.app_domain. The validation record goes into the Route 53 zone (route53.tf), so
+# the certificate is issued without anything being added by hand.
 resource "aws_acm_certificate" "app" {
   domain_name       = var.app_domain
   validation_method = "DNS"
@@ -75,7 +75,8 @@ resource "aws_acm_certificate" "app" {
 }
 
 resource "aws_acm_certificate_validation" "app" {
-  certificate_arn = aws_acm_certificate.app.arn
+  certificate_arn         = aws_acm_certificate.app.arn
+  validation_record_fqdns = [for r in aws_route53_record.acm_validation : r.fqdn]
 
   timeouts {
     create = "45m"
