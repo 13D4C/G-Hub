@@ -118,7 +118,7 @@
   .bg-tile-navbar {
     background-image: 
     linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1)), 
-    url('/texture/metro-tiles.jpg');
+    url('/texture/shitty-tiles.jpg');
     background-repeat: repeat;
     background-size: 400px auto;
     background-position: center 27px;

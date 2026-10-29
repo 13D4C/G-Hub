@@ -1,6 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from 'react'
 
-const TEXTURE_SRC = '/texture/metro-tiles.jpg'
+const TEXTURE_SRC = '/texture/shitty-tiles.jpg'
 const BAKE_SIZE = 512
 const TILE_SCREEN_PX = 400
 const MAX_POINTER_SPEED = 2
