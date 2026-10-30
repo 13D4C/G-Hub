@@ -24,8 +24,17 @@ output "dynamodb_table_prefix" {
 }
 
 output "app_url_override" {
-  value       = var.app_url
-  description = "Empty means deploy.sh uses the load balancer's own hostname."
+  value       = var.app_url != "" ? var.app_url : "https://${var.app_domain}"
+  description = "The origin deploy.sh writes into APP_URL and GOOGLE_REDIRECT_URI."
+}
+
+output "alb_dns_name" {
+  value       = aws_lb.app.dns_name
+  description = "What the Route 53 alias points at."
+}
+
+output "web_acl_name" {
+  value = aws_wafv2_web_acl.app.name
 }
 
 output "session_secret" {

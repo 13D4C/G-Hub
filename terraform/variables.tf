@@ -81,13 +81,24 @@ variable "image_tag" {
   description = "Tag in the ECR repository that both deployments run."
 }
 
+variable "app_domain" {
+  type        = string
+  default     = "clouddev.natthapong.net"
+  description = "Hostname the ALB serves. Its Route 53 zone and certificate come from dns/, which must be applied first."
+}
+
 variable "app_url" {
   type        = string
   default     = ""
+  description = "Public origin the app builds links with. Empty means https://<app_domain>."
+}
+
+variable "waf_rate_limit" {
+  type        = number
+  default     = 2000
   description = <<-EOT
-    Public origin, e.g. https://g-hub.example.com. Empty uses the load balancer's
-    own DNS name over HTTP, which is enough for email/password sign-in but not for
-    Google OAuth: Google refuses any redirect URI that is not HTTPS.
+    Requests per IP per five minutes before WAF blocks it, media excluded. A whole
+    classroom behind one NAT address counts as one IP, so raise this for a demo.
   EOT
 }
 

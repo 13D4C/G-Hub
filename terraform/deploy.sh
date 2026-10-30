@@ -98,16 +98,7 @@ kubectl -n g-hub create secret generic app-secrets \
 
 kubectl apply -f k8s/30-service.yaml
 
-echo "==> waiting for the load balancer"
-for _ in $(seq 1 60); do
-  LB=$(kubectl -n g-hub get svc web -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-  [ -n "$LB" ] && break
-  sleep 10
-done
-[ -n "${LB:-}" ] || { echo "the load balancer never got a hostname" >&2; exit 1; }
-
 APP_URL=$(out app_url_override)
-[ -z "$APP_URL" ] && APP_URL="http://$LB"
 
 render() {
   sed -e "s|__IMAGE__|$ECR:$TAG|g" \
@@ -150,13 +141,10 @@ printf '%s\n' "${PHASES[@]}"
 
 echo
 echo "  app     $APP_URL"
+echo "  alb     $(out alb_dns_name)"
+echo "  waf     $(out web_acl_name)  (blocked requests: console > WAF > Web ACLs > Sampled requests)"
 echo "  pods    kubectl -n g-hub get pods"
 echo "  logs    kubectl -n g-hub logs -l app=web --tail=100 -f"
 echo
 echo "  The load balancer takes another minute or two to pass its own health"
 echo "  checks before $APP_URL answers."
-if [[ "$APP_URL" == http://* ]]; then
-  echo
-  echo "  NOTE  HTTP only, so Google sign-in will not work: Google rejects any"
-  echo "        redirect URI that is not HTTPS. Email and password sign-in works."
-fi

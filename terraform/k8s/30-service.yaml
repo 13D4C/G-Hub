@@ -3,13 +3,14 @@ kind: Service
 metadata:
   name: web
   namespace: g-hub
-  annotations:
-    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "300"
 spec:
-  type: LoadBalancer
+  # The ALB in alb.tf sends traffic to this port on every node. Keep it in step with
+  # local.node_port there.
+  type: NodePort
   selector:
     app: web
   ports:
     - port: 80
       targetPort: 3000
+      nodePort: 30080
       protocol: TCP

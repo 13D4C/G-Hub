@@ -13,10 +13,12 @@
 # node_instance_type = "t3.large"
 # node_desired_size  = 2
 
-# Google sign-in needs HTTPS, which needs a domain and a certificate on the load
-# balancer. Without them the site runs on the load balancer's own HTTP hostname
-# and email/password sign-in still works.
-# app_url = "https://g-hub.example.com"
+# The hostname the ALB serves over HTTPS. Its zone and certificate come from dns/,
+# which must be applied first; set the same name there.
+# app_domain = "clouddev.natthapong.net"
+
+# Requests per IP per five minutes before WAF blocks it, media excluded.
+# waf_rate_limit = 2000
 
 # Stripe test mode only — the app refuses a live key.
 # stripe_secret_key     = "sk_test_..."

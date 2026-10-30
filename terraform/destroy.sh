@@ -27,24 +27,20 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   echo "This permanently deletes:"
   echo "  - every DynamoDB table (all accounts, videos, comments, payments)"
   [ -n "$BUCKET" ] && echo "  - the S3 bucket $BUCKET and every uploaded video in it"
-  echo "  - the EKS cluster, its nodes, the load balancer and the container images"
+  echo "  - the EKS cluster, its nodes, the load balancer, the WAF and the container images"
+  echo "It keeps the Route 53 zone and certificate in dns/, so Cloudflare needs no change."
   echo
   read -r -p "Type the word destroy to continue: " reply
   [ "$reply" = "destroy" ] || { echo "Cancelled."; exit 1; }
 fi
 
 if [ -n "$CLUSTER" ] && command -v kubectl >/dev/null; then
-  echo "==> deleting the Kubernetes load balancer"
+  # The load balancer is Terraform's now (alb.tf), so there is nothing of Kubernetes' to wait
+  # out; this only clears the namespace before the cluster goes.
+  echo "==> deleting the Kubernetes namespace"
   aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" >/dev/null 2>&1 || true
   kubectl delete -f k8s/30-service.yaml --ignore-not-found --timeout=180s 2>/dev/null || true
   kubectl delete namespace g-hub --ignore-not-found --timeout=180s 2>/dev/null || true
-
-  for _ in $(seq 1 18); do
-    LEFT=$(aws elbv2 describe-load-balancers --region "$REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null)
-    CLASSIC=$(aws elb describe-load-balancers --region "$REGION" --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)
-    [ -z "$LEFT" ] && [ -z "$CLASSIC" ] && break
-    sleep 10
-  done
 fi
 
 if [ -n "$BUCKET" ]; then
@@ -81,11 +77,14 @@ check "EBS volumes"       "$(aws ec2 describe-volumes --region "$REGION" --query
 check "non-default VPCs"  "$(aws ec2 describe-vpcs --region "$REGION" --filters Name=isDefault,Values=false --query 'Vpcs[].VpcId' --output text 2>/dev/null)"
 
 echo
+echo "  kept         Route 53 zone and certificate in dns/ (\$0.50/month; terraform -chdir=dns destroy to drop)"
+
+echo
 if [ "$LEFT" -eq 0 ]; then
   echo "Everything is gone. Nothing in this region is still costing money."
 else
   echo "Something survived — see above. Anything listed is still billable."
-  echo "An Elastic IP or a load balancer left behind usually means the Service was"
-  echo "still up when the cluster went away. Delete it in the console, then re-run."
+  echo "A load balancer, NAT gateway or Elastic IP left behind usually means"
+  echo "terraform destroy stopped partway. Re-run this, or delete it in the console."
   exit 1
 fi
